@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
+  <meta http-equiv="Permissions-Policy" content="local-network-access=*" />
   <title>M5 Bus Controller</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -31,6 +32,10 @@
   <header class="mb-6 text-center">
     <h1 class="text-2xl font-bold tracking-tight text-white">M5 Bus Controller</h1>
     <p class="mt-1 text-sm text-slate-400">九巴 ETA → M5StickS3 匙扣</p>
+    <div id="liveBadge" class="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-500">
+      <span id="liveDot" class="h-2 w-2 rounded-full bg-slate-600"></span>
+      <span id="liveText">M5 Offline</span>
+    </div>
   </header>
 
   <!-- Connection: BLE or WiFi -->
@@ -63,25 +68,25 @@
 
     <div id="panelWifi" class="hidden">
       <div class="mb-3 flex items-center justify-between">
-        <span class="text-sm font-medium text-slate-300">WiFi 狀態</span>
+        <span class="text-sm font-medium text-slate-300">Internet / WiFi</span>
         <div class="flex items-center gap-2 text-sm text-slate-500">
           <span id="wifiDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
           <span id="wifiLabel">未連線</span>
         </div>
       </div>
-      <label class="mb-1 block text-xs text-slate-400" for="wifiHost">M5 IP 或主機名</label>
-      <input id="wifiHost" type="text" placeholder="m5-bus.local 或 192.168.x.x"
+      <label class="mb-1 block text-xs text-slate-400" for="wifiHost">M5 IP（推薦數字 IP）</label>
+      <input id="wifiHost" type="text" placeholder="例如 192.168.1.42"
         class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono text-white outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500" />
       <button id="btnWifiConnect"
         class="mb-2 w-full rounded-xl bg-orange-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50">
-        🟠 連線 M5 (WiFi)
+        🟠 連線並監察 Live
       </button>
       <a id="btnOpenM5Page" href="#" target="_blank" rel="noopener"
         class="mb-2 block w-full rounded-xl border border-orange-500/50 px-4 py-2.5 text-center text-sm font-medium text-orange-300 transition hover:bg-orange-500/10">
-        開啟 M5 本機頁（確認 IP）
+        開啟 M5 本機 LIVE 頁（上傳設定最穩）
       </a>
-      <p class="mt-2 text-xs text-slate-500">手機與 M5 同一 WiFi。在瀏覽器開 <code class="text-slate-400">http://m5-bus.local/</code> 或路由器上的 M5 IP，再填入上方。</p>
-      <p class="mt-1 text-xs text-amber-500/90">請用 <strong>Chrome</strong>。按連線時若詢問「允許存取本地網絡」必須允許。充電中電池框會變青色。</p>
+      <p class="mt-2 text-xs text-slate-500">1) M5 綠燈亮 2) 手機同一 WiFi 3) 填 IP 4) 用 <strong>Chrome</strong> 允許「本地網絡」。若 Pages 連唔到，請用上方「本機 LIVE 頁」上傳。</p>
+      <p class="mt-1 text-xs text-amber-500/90">頂部徽章會每 3 秒 ping M5：<span class="text-emerald-400">Live</span> / Offline。</p>
     </div>
   </section>
 
@@ -269,6 +274,8 @@
     let transportMode = localStorage.getItem(TRANSPORT_KEY) || 'ble';
     let wifiConnected = false;
     let wifiHost = localStorage.getItem(WIFI_HOST_KEY) || '';
+    let liveTimer = null;
+    let m5Live = false;
     let kmbRoutes = [];
     let kmbRouteNumbers = [];
     let kmbGeneratedAt = '';
@@ -295,7 +302,7 @@
     }
 
     function isTransportConnected() {
-      if (transportMode === 'wifi') return wifiConnected;
+      if (transportMode === 'wifi') return wifiConnected && m5Live;
       return !!bleChar;
     }
 
@@ -341,32 +348,82 @@
       updateSendControls();
     }
 
-    function setTransportMode(mode) {
-      transportMode = mode;
-      localStorage.setItem(TRANSPORT_KEY, mode);
-      const bleActive = mode === 'ble';
-      $('panelBle').classList.toggle('hidden', !bleActive);
-      $('panelWifi').classList.toggle('hidden', bleActive);
-      $('modeBle').className = 'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ' +
-        (bleActive ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white');
-      $('modeWifi').className = 'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ' +
-        (!bleActive ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white');
-      updateSendControls();
+    function setLiveUi(live, detail = '') {
+      m5Live = live;
+      const badge = $('liveBadge');
+      const dot = $('liveDot');
+      const text = $('liveText');
+      if (live) {
+        badge.className = 'mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-950 px-3 py-1.5 text-xs font-semibold text-emerald-300';
+        dot.className = 'status-dot h-2 w-2 rounded-full bg-emerald-400';
+        text.textContent = detail ? `M5 Live · ${detail}` : 'M5 Live';
+      } else {
+        badge.className = 'mt-3 inline-flex items-center gap-2 rounded-full border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-500';
+        dot.className = 'h-2 w-2 rounded-full bg-slate-600';
+        text.textContent = detail || 'M5 Offline';
+      }
     }
 
     function wifiFetchOptions(extra = {}) {
       const host = normalizeWifiHost(wifiHost || $('wifiHost')?.value || '');
-      const isLocalName = /\.local$/i.test(host) || /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
+      const isIp = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
+      const isLocalName = /\.local$/i.test(host) || isIp;
       const opts = {
         mode: 'cors',
         cache: 'no-store',
         ...extra,
       };
-      // Chrome Local Network Access: exempt HTTPS→HTTP private fetches from mixed content.
       if (isLocalName) {
         opts.targetAddressSpace = 'local';
       }
       return opts;
+    }
+
+    async function pingM5Once() {
+      const host = normalizeWifiHost(wifiHost || $('wifiHost')?.value || '');
+      if (!host) {
+        setLiveUi(false, '未設定 IP');
+        return false;
+      }
+      try {
+        const res = await fetchWithTimeout(wifiApiUrl('/api/ping'), wifiFetchOptions(), 4000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const j = await res.json();
+        if (!j.live && j.wifi === false) throw new Error('M5 WiFi down');
+        const ip = j.ip || host;
+        setLiveUi(true, ip);
+        if (j.ip && j.ip !== wifiHost) {
+          wifiHost = j.ip;
+          $('wifiHost').value = j.ip;
+          localStorage.setItem(WIFI_HOST_KEY, j.ip);
+          updateM5PageLink();
+        }
+        return true;
+      } catch (e) {
+        setLiveUi(false, 'Offline');
+        return false;
+      }
+    }
+
+    function startLiveMonitor() {
+      stopLiveMonitor();
+      pingM5Once();
+      liveTimer = setInterval(() => {
+        pingM5Once().then((ok) => {
+          if (transportMode === 'wifi') {
+            wifiConnected = ok;
+            if (ok) setWifiUi(true, wifiHost);
+            else setWifiUi(false);
+          }
+        });
+      }, 3000);
+    }
+
+    function stopLiveMonitor() {
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = null;
+      }
     }
 
     async function fetchWithTimeout(url, options = {}, ms = 10000) {
@@ -394,43 +451,48 @@
 
     async function connectWifi() {
       const host = normalizeWifiHost($('wifiHost').value);
-      if (!host) throw new Error('請輸入 M5 IP（螢幕底部會顯示）或 m5-bus.local');
+      if (!host) throw new Error('請輸入 M5 的數字 IP（路由器 DHCP 列表 / Serial）');
       wifiHost = host;
       localStorage.setItem(WIFI_HOST_KEY, host);
       updateM5PageLink();
-      log(`連接 http://${host}/api/status …`);
-      let res;
-      try {
-        res = await fetchWithTimeout(wifiApiUrl('/api/status'), wifiFetchOptions());
-      } catch (e) {
-        const tip = e.name === 'AbortError'
-          ? '連線逾時'
-          : '瀏覽器阻擋本地網絡（請用 Chrome、允許本地網絡，並確認 IP）';
-        throw new Error(`${tip}：${e.message || e.name}`);
+      log(`Ping http://${host}/api/ping …`);
+      const ok = await pingM5Once();
+      if (!ok) {
+        throw new Error('無法連到 M5。請用 Chrome、允許本地網絡，或改開「本機 LIVE 頁」');
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const status = await res.json();
-      if (!status.wifi) throw new Error('M5 尚未連上 WiFi');
       wifiConnected = true;
-      if (status.ip) {
-        wifiHost = status.ip;
-        $('wifiHost').value = status.ip;
-        localStorage.setItem(WIFI_HOST_KEY, status.ip);
-        updateM5PageLink();
-      }
-      setWifiUi(true, status.ip || host);
-      log(`WiFi 已連線 M5 @ ${status.ip || host}`, 'ok');
-      if (status.busA?.route) {
-        log(`M5 現設定：${status.busA.route} / ${status.busB?.route || '-'}`, 'info');
-      }
+      setWifiUi(true, wifiHost);
+      startLiveMonitor();
+      log(`M5 Live @ ${wifiHost}`, 'ok');
     }
 
     function disconnectWifi() {
       wifiConnected = false;
       setWifiUi(false);
+      stopLiveMonitor();
+      setLiveUi(false, '已中斷');
       stopAutoSync();
       $('autoSync').checked = false;
       log('WiFi 已中斷', 'warn');
+    }
+
+    function setTransportMode(mode) {
+      transportMode = mode;
+      localStorage.setItem(TRANSPORT_KEY, mode);
+      const bleActive = mode === 'ble';
+      $('panelBle').classList.toggle('hidden', !bleActive);
+      $('panelWifi').classList.toggle('hidden', bleActive);
+      $('modeBle').className = 'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ' +
+        (bleActive ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white');
+      $('modeWifi').className = 'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ' +
+        (!bleActive ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white');
+      updateSendControls();
+      if (!bleActive && wifiHost) {
+        startLiveMonitor();
+      } else if (bleActive) {
+        stopLiveMonitor();
+        setLiveUi(!!bleChar, bleChar ? 'BLE' : 'Offline');
+      }
     }
 
     async function sendPayloadToM5(payload) {
@@ -802,6 +864,7 @@
 
       bleDevice = device;
       setBleUi(true);
+      setLiveUi(true, 'BLE');
       log(`已連線：${device.name}`, 'ok');
     }
 
@@ -816,6 +879,7 @@
       bleDevice = null;
       bleChar = null;
       setBleUi(false);
+      if (transportMode === 'ble') setLiveUi(false, 'Offline');
       stopAutoSync();
       $('autoSync').checked = false;
       log('BLE 已中斷', 'warn');
@@ -954,6 +1018,7 @@
 
     setBleUi(false);
     setWifiUi(false);
+    setLiveUi(false);
     if (wifiHost) $('wifiHost').value = wifiHost;
     updateM5PageLink();
     $('wifiHost').addEventListener('input', updateM5PageLink);
