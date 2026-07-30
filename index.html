@@ -46,7 +46,7 @@
       class="w-full rounded-xl bg-blue-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
       🔵 連線 M5 匙扣 (BLE)
     </button>
-    <p class="mt-2 text-xs text-slate-500">裝置名稱：<code class="text-slate-400">M5-Bus</code> · 請用 <a href="https://sbgitdept.github.io/M5StickS3/" class="text-blue-400 underline">HTTPS 網址</a> 開啟（Web Bluetooth 需要）</p>
+    <p class="mt-2 text-xs text-slate-500">裝置名稱：<code class="text-slate-400">M5-Bus</code> · 請用 <a href="https://sbgitdept.github.io/m5-bus-controller/" class="text-blue-400 underline">HTTPS 網址</a> 開啟（Web Bluetooth 需要）</p>
   </section>
 
   <!-- Route Config -->
@@ -641,7 +641,7 @@
     setBleUi(false);
 
     if (!window.isSecureContext) {
-      log('手機藍牙需要 HTTPS： https://sbgitdept.github.io/M5StickS3/', 'warn');
+      log('手機藍牙需要 HTTPS： https://sbgitdept.github.io/m5-bus-controller/', 'warn');
     } else if (!navigator.bluetooth) {
       log('此瀏覽器不支援 Web Bluetooth', 'warn');
     }
