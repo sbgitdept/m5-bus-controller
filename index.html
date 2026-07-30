@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-HK" class="h-full">
 <head>
   <meta charset="UTF-8" />
@@ -7,6 +7,7 @@
   <meta http-equiv="Permissions-Policy" content="local-network-access=*" />
   <title>M5 Bus Controller</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -38,56 +39,24 @@
     </div>
   </header>
 
-  <!-- Connection: BLE or WiFi -->
+  <!-- Cloud MQTT -->
   <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
-    <div class="mb-3 flex rounded-xl bg-slate-900 p-1">
-      <button id="modeBle" type="button"
-        class="flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition bg-blue-600 text-white">
-        藍牙 BLE
-      </button>
-      <button id="modeWifi" type="button"
-        class="flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition text-slate-400 hover:text-white">
-        WiFi 網絡
-      </button>
-    </div>
-
-    <div id="panelBle">
-      <div class="mb-3 flex items-center justify-between">
-        <span class="text-sm font-medium text-slate-300">藍牙狀態</span>
-        <div class="flex items-center gap-2 text-sm text-slate-500">
-          <span id="bleDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
-          <span id="bleLabel">未連線</span>
-        </div>
+    <div class="mb-3 flex items-center justify-between">
+      <span class="text-sm font-medium text-slate-300">Internet 雲端 (MQTT)</span>
+      <div class="flex items-center gap-2 text-sm text-slate-500">
+        <span id="cloudDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
+        <span id="cloudLabel">未連線</span>
       </div>
-      <button id="btnConnect"
-        class="w-full rounded-xl bg-blue-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
-        🔵 連線 M5 匙扣 (BLE)
-      </button>
-      <p class="mt-2 text-xs text-slate-500">裝置名稱：<code class="text-slate-400">M5-Bus</code> · 需用 <a href="https://sbgitdept.github.io/m5-bus-controller/" class="text-blue-400 underline">HTTPS</a> 開啟（Web Bluetooth）</p>
     </div>
-
-    <div id="panelWifi" class="hidden">
-      <div class="mb-3 flex items-center justify-between">
-        <span class="text-sm font-medium text-slate-300">Internet / WiFi</span>
-        <div class="flex items-center gap-2 text-sm text-slate-500">
-          <span id="wifiDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
-          <span id="wifiLabel">未連線</span>
-        </div>
-      </div>
-      <label class="mb-1 block text-xs text-slate-400" for="wifiHost">M5 IP（推薦數字 IP）</label>
-      <input id="wifiHost" type="text" placeholder="例如 192.168.1.42"
-        class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono text-white outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500" />
-      <button id="btnWifiConnect"
-        class="mb-2 w-full rounded-xl bg-orange-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50">
-        🟠 連線並監察 Live
-      </button>
-      <a id="btnOpenM5Page" href="#" target="_blank" rel="noopener"
-        class="mb-2 block w-full rounded-xl border border-orange-500/50 px-4 py-2.5 text-center text-sm font-medium text-orange-300 transition hover:bg-orange-500/10">
-        開啟 M5 本機 LIVE 頁（上傳設定最穩）
-      </a>
-      <p class="mt-2 text-xs text-slate-500">1) M5 綠燈亮 2) 手機同一 WiFi 3) 填 IP 4) 用 <strong>Chrome</strong> 允許「本地網絡」。若 Pages 連唔到，請用上方「本機 LIVE 頁」上傳。</p>
-      <p class="mt-1 text-xs text-amber-500/90">頂部徽章會每 3 秒 ping M5：<span class="text-emerald-400">Live</span> / Offline。</p>
-    </div>
+    <label class="mb-1 block text-xs text-slate-400" for="deviceId">Device ID（與 M5 螢幕左下角相同）</label>
+    <input id="deviceId" type="text" placeholder="例如 AC276ED279C4"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono uppercase text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500" />
+    <button id="btnCloudConnect"
+      class="mb-2 w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-emerald-500">
+      ☁ 連線雲端 Broker
+    </button>
+    <p class="mt-2 text-xs text-slate-500">M5 連上 Internet WiFi 後會自動訂閱 <code class="text-slate-400">m5bus/&lt;DeviceID&gt;/config</code>。手機唔使近距離，有網絡即可遠端發送。</p>
+    <p class="mt-1 text-xs text-slate-500">Broker：<code class="text-slate-400">broker.hivemq.com</code>（WSS）· 頂部徽章顯示 M5 Live（status heartbeat）</p>
   </section>
 
   <!-- Route Config -->
@@ -268,14 +237,15 @@
       }, 500);
     }
 
-    let bleDevice = null;
-    let bleChar = null;
+    const DEVICE_ID_KEY = 'm5-device-id';
+    const MQTT_WS_URL = 'wss://broker.hivemq.com:8884/mqtt';
+
+    let mqttClient = null;
+    let cloudConnected = false;
     let autoSyncTimer = null;
-    let transportMode = localStorage.getItem(TRANSPORT_KEY) || 'ble';
-    let wifiConnected = false;
-    let wifiHost = localStorage.getItem(WIFI_HOST_KEY) || '';
-    let liveTimer = null;
+    let liveWatchdog = null;
     let m5Live = false;
+    let lastStatusMs = 0;
     let kmbRoutes = [];
     let kmbRouteNumbers = [];
     let kmbGeneratedAt = '';
@@ -293,17 +263,15 @@
       while (el.children.length > 20) el.removeChild(el.lastChild);
     }
 
-    function normalizeWifiHost(host) {
-      return host.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    function getDeviceId() {
+      return ($('deviceId').value || '').trim().toUpperCase().replace(/[^0-9A-F]/g, '');
     }
 
-    function wifiApiUrl(path) {
-      return `http://${normalizeWifiHost(wifiHost)}${path}`;
-    }
+    function topicConfig(id) { return `m5bus/${id}/config`; }
+    function topicStatus(id) { return `m5bus/${id}/status`; }
 
     function isTransportConnected() {
-      if (transportMode === 'wifi') return wifiConnected && m5Live;
-      return !!bleChar;
+      return cloudConnected && !!mqttClient;
     }
 
     function updateSendControls() {
@@ -312,38 +280,21 @@
       $('autoSync').disabled = !connected;
     }
 
-    function setBleUi(connected) {
-      const dot = $('bleDot');
-      const label = $('bleLabel');
-      const btn = $('btnConnect');
+    function setCloudUi(connected, detail = '') {
+      cloudConnected = connected;
+      const dot = $('cloudDot');
+      const label = $('cloudLabel');
+      const btn = $('btnCloudConnect');
       if (connected) {
         dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-emerald-400';
-        label.textContent = '已連線';
+        label.textContent = detail || '雲端已連線';
         label.className = 'text-emerald-400';
-        btn.textContent = '🔴 中斷 BLE';
+        btn.textContent = '🔴 中斷雲端';
       } else {
         dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-slate-600';
         label.textContent = '未連線';
         label.className = 'text-slate-500';
-        btn.textContent = '🔵 連線 M5 匙扣 (BLE)';
-      }
-      updateSendControls();
-    }
-
-    function setWifiUi(connected, detail = '') {
-      const dot = $('wifiDot');
-      const label = $('wifiLabel');
-      const btn = $('btnWifiConnect');
-      if (connected) {
-        dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-orange-400';
-        label.textContent = detail || '已連線';
-        label.className = 'text-orange-400';
-        btn.textContent = '🔴 中斷 WiFi';
-      } else {
-        dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-slate-600';
-        label.textContent = '未連線';
-        label.className = 'text-slate-500';
-        btn.textContent = '🟠 連線 M5 (WiFi)';
+        btn.textContent = '☁ 連線雲端 Broker';
       }
       updateSendControls();
     }
@@ -364,157 +315,106 @@
       }
     }
 
-    function wifiFetchOptions(extra = {}) {
-      const host = normalizeWifiHost(wifiHost || $('wifiHost')?.value || '');
-      const isIp = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
-      const isLocalName = /\.local$/i.test(host) || isIp;
-      const opts = {
-        mode: 'cors',
-        cache: 'no-store',
-        ...extra,
-      };
-      if (isLocalName) {
-        opts.targetAddressSpace = 'local';
-      }
-      return opts;
-    }
-
-    async function pingM5Once() {
-      const host = normalizeWifiHost(wifiHost || $('wifiHost')?.value || '');
-      if (!host) {
-        setLiveUi(false, '未設定 IP');
-        return false;
-      }
-      try {
-        const res = await fetchWithTimeout(wifiApiUrl('/api/ping'), wifiFetchOptions(), 4000);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const j = await res.json();
-        if (!j.live && j.wifi === false) throw new Error('M5 WiFi down');
-        const ip = j.ip || host;
-        setLiveUi(true, ip);
-        if (j.ip && j.ip !== wifiHost) {
-          wifiHost = j.ip;
-          $('wifiHost').value = j.ip;
-          localStorage.setItem(WIFI_HOST_KEY, j.ip);
-          updateM5PageLink();
+    function startLiveWatchdog() {
+      stopLiveWatchdog();
+      liveWatchdog = setInterval(() => {
+        if (!lastStatusMs || Date.now() - lastStatusMs > 25000) {
+          setLiveUi(false, '等待 heartbeat');
         }
-        return true;
-      } catch (e) {
-        setLiveUi(false, 'Offline');
-        return false;
-      }
-    }
-
-    function startLiveMonitor() {
-      stopLiveMonitor();
-      pingM5Once();
-      liveTimer = setInterval(() => {
-        pingM5Once().then((ok) => {
-          if (transportMode === 'wifi') {
-            wifiConnected = ok;
-            if (ok) setWifiUi(true, wifiHost);
-            else setWifiUi(false);
-          }
-        });
       }, 3000);
     }
 
-    function stopLiveMonitor() {
-      if (liveTimer) {
-        clearInterval(liveTimer);
-        liveTimer = null;
+    function stopLiveWatchdog() {
+      if (liveWatchdog) {
+        clearInterval(liveWatchdog);
+        liveWatchdog = null;
       }
     }
 
-    async function fetchWithTimeout(url, options = {}, ms = 10000) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), ms);
-      try {
-        return await fetch(url, { ...options, signal: controller.signal });
-      } finally {
-        clearTimeout(timer);
+    function disconnectCloud() {
+      stopLiveWatchdog();
+      if (mqttClient) {
+        try { mqttClient.end(true); } catch { /* ignore */ }
+        mqttClient = null;
       }
-    }
-
-    function updateM5PageLink() {
-      const host = normalizeWifiHost($('wifiHost').value || wifiHost);
-      const link = $('btnOpenM5Page');
-      if (!link) return;
-      if (host) {
-        link.href = `http://${host}/`;
-        link.classList.remove('pointer-events-none', 'opacity-40');
-      } else {
-        link.href = '#';
-        link.classList.add('pointer-events-none', 'opacity-40');
-      }
-    }
-
-    async function connectWifi() {
-      const host = normalizeWifiHost($('wifiHost').value);
-      if (!host) throw new Error('請輸入 M5 的數字 IP（路由器 DHCP 列表 / Serial）');
-      wifiHost = host;
-      localStorage.setItem(WIFI_HOST_KEY, host);
-      updateM5PageLink();
-      log(`Ping http://${host}/api/ping …`);
-      const ok = await pingM5Once();
-      if (!ok) {
-        throw new Error('無法連到 M5。請用 Chrome、允許本地網絡，或改開「本機 LIVE 頁」');
-      }
-      wifiConnected = true;
-      setWifiUi(true, wifiHost);
-      startLiveMonitor();
-      log(`M5 Live @ ${wifiHost}`, 'ok');
-    }
-
-    function disconnectWifi() {
-      wifiConnected = false;
-      setWifiUi(false);
-      stopLiveMonitor();
-      setLiveUi(false, '已中斷');
+      setCloudUi(false);
+      setLiveUi(false, 'Offline');
       stopAutoSync();
       $('autoSync').checked = false;
-      log('WiFi 已中斷', 'warn');
+      log('雲端已中斷', 'warn');
     }
 
-    function setTransportMode(mode) {
-      transportMode = mode;
-      localStorage.setItem(TRANSPORT_KEY, mode);
-      const bleActive = mode === 'ble';
-      $('panelBle').classList.toggle('hidden', !bleActive);
-      $('panelWifi').classList.toggle('hidden', bleActive);
-      $('modeBle').className = 'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ' +
-        (bleActive ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white');
-      $('modeWifi').className = 'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ' +
-        (!bleActive ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white');
-      updateSendControls();
-      if (!bleActive && wifiHost) {
-        startLiveMonitor();
-      } else if (bleActive) {
-        stopLiveMonitor();
-        setLiveUi(!!bleChar, bleChar ? 'BLE' : 'Offline');
+    function connectCloud() {
+      if (typeof mqtt === 'undefined') {
+        throw new Error('mqtt.js 未載入');
       }
+      const id = getDeviceId();
+      if (id.length < 8) throw new Error('請輸入 M5 Device ID（螢幕左下角）');
+      localStorage.setItem(DEVICE_ID_KEY, id);
+
+      if (mqttClient) disconnectCloud();
+
+      log(`連線 ${MQTT_WS_URL} …`);
+      log(`訂閱 ${topicStatus(id)} · 發送 ${topicConfig(id)}`);
+
+      mqttClient = mqtt.connect(MQTT_WS_URL, {
+        clientId: `web-${id}-${Math.random().toString(16).slice(2, 8)}`,
+        clean: true,
+        reconnectPeriod: 4000,
+        connectTimeout: 15000,
+      });
+
+      mqttClient.on('connect', () => {
+        setCloudUi(true, 'HiveMQ');
+        mqttClient.subscribe(topicStatus(id), { qos: 0 });
+        startLiveWatchdog();
+        log('雲端 MQTT 已連線', 'ok');
+      });
+
+      mqttClient.on('reconnect', () => log('雲端重連中…', 'warn'));
+      mqttClient.on('error', (err) => log(`MQTT 錯誤：${err.message}`, 'err'));
+      mqttClient.on('close', () => {
+        setCloudUi(false);
+        setLiveUi(false, 'Broker 斷線');
+      });
+
+      mqttClient.on('message', (topic, buf) => {
+        if (topic !== topicStatus(id)) return;
+        try {
+          const msg = JSON.parse(buf.toString());
+          lastStatusMs = Date.now();
+          const detail = msg.ip ? `${msg.device || id} · ${msg.ip}` : (msg.device || id);
+          setLiveUi(!!msg.live || !!msg.mqtt, detail);
+        } catch {
+          lastStatusMs = Date.now();
+          setLiveUi(true, id);
+        }
+      });
     }
 
     async function sendPayloadToM5(payload) {
-      if (transportMode === 'wifi') {
-        if (!wifiConnected) throw new Error('請先連接 WiFi');
-        const res = await fetchWithTimeout(wifiApiUrl('/api/config'), wifiFetchOptions({
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: payload,
-        }));
-        if (!res.ok) {
-          const err = await res.text().catch(() => '');
-          throw new Error(`HTTP ${res.status}${err ? ` — ${err}` : ''}`);
-        }
-        const json = await res.json().catch(() => ({}));
-        if (json.ok === false) throw new Error(json.error || 'M5 拒絕設定');
-        return;
-      }
-      if (!bleChar) throw new Error('請先連接 BLE');
-      const encoder = new TextEncoder();
-      await bleChar.writeValue(encoder.encode(payload));
+      if (!isTransportConnected()) throw new Error('請先連線雲端 MQTT');
+      const id = getDeviceId();
+      const body = JSON.stringify({ dualbus: payload, ts: Date.now() });
+      await new Promise((resolve, reject) => {
+        mqttClient.publish(topicConfig(id), body, { qos: 0 }, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
     }
+
+    // --- placeholders removed: BLE / LAN WiFi ---
+    function __cloudTransportReady() { return true; }
+
+    async function __legacyRemoved() {
+      return;
+    }
+
+    // Keep sendToM5 below using sendPayloadToM5
+    const __KEEP_SEND = true;
+    if (!__KEEP_SEND) __legacyRemoved();
+
 
     function sortRouteNo(a, b) {
       const na = a.match(/^(\d+)(.*)$/);
@@ -815,7 +715,7 @@
       if (!stopA) throw new Error('請選擇左欄車站');
       if (!stopB) throw new Error('請選擇右欄車站');
       if (!isTransportConnected()) {
-        throw new Error(transportMode === 'wifi' ? '請先連接 WiFi' : '請先連接 BLE');
+        throw new Error('請先連線雲端 MQTT');
       }
 
       const svcA = getServiceType();
@@ -838,51 +738,10 @@
       saveDb(db);
       log('已儲存設定至本機 DB', 'ok');
 
-      $('lastPayload').textContent = `→ ${payload}`;
+      $('lastPayload').textContent = `→ MQTT ${payload}`;
       $('lastPayload').classList.remove('hidden');
-      log(`已發送 ${payload}`, 'ok');
+      log(`已經雲端發送 ${payload}`, 'ok');
       return payload;
-    }
-
-    async function connectBle() {
-      if (!navigator.bluetooth) {
-        throw new Error('此瀏覽器不支援 Web Bluetooth（請用 Chrome / Edge）');
-      }
-
-      log('搜尋 M5-Bus…');
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ name: BLE_DEVICE_NAME }],
-        optionalServices: [BLE_SERVICE_UUID],
-      });
-
-      device.addEventListener('gattserverdisconnected', onDisconnected);
-
-      log('連接 GATT…');
-      const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(BLE_SERVICE_UUID);
-      bleChar = await service.getCharacteristic(BLE_CHAR_UUID);
-
-      bleDevice = device;
-      setBleUi(true);
-      setLiveUi(true, 'BLE');
-      log(`已連線：${device.name}`, 'ok');
-    }
-
-    function disconnectBle() {
-      if (bleDevice?.gatt?.connected) {
-        bleDevice.gatt.disconnect();
-      }
-      onDisconnected();
-    }
-
-    function onDisconnected() {
-      bleDevice = null;
-      bleChar = null;
-      setBleUi(false);
-      if (transportMode === 'ble') setLiveUi(false, 'Offline');
-      stopAutoSync();
-      $('autoSync').checked = false;
-      log('BLE 已中斷', 'warn');
     }
 
     function startAutoSync() {
@@ -957,36 +816,17 @@
       }
     });
 
-    $('btnConnect').addEventListener('click', async () => {
+    $('btnCloudConnect').addEventListener('click', () => {
       try {
-        if (bleDevice?.gatt?.connected) {
-          disconnectBle();
+        if (cloudConnected) {
+          disconnectCloud();
           return;
         }
-        await connectBle();
+        connectCloud();
       } catch (e) {
-        if (e.name !== 'NotFoundError') {
-          log(`BLE 連線失敗：${e.message}`, 'err');
-        }
+        log(`雲端連線失敗：${e.message}`, 'err');
       }
     });
-
-    $('btnWifiConnect').addEventListener('click', async () => {
-      try {
-        if (wifiConnected) {
-          disconnectWifi();
-          return;
-        }
-        await connectWifi();
-      } catch (e) {
-        const msg = e.name === 'AbortError' ? '連線逾時' : e.message;
-        log(`WiFi 連線失敗：${msg}`, 'err');
-        disconnectWifi();
-      }
-    });
-
-    $('modeBle').addEventListener('click', () => setTransportMode('ble'));
-    $('modeWifi').addEventListener('click', () => setTransportMode('wifi'));
 
     $('btnSend').addEventListener('click', async () => {
       try {
@@ -1000,7 +840,7 @@
       if (e.target.checked) {
         if (!isTransportConnected()) {
           e.target.checked = false;
-          log(transportMode === 'wifi' ? '請先連接 WiFi' : '請先連接 BLE', 'warn');
+          log('請先連線雲端 MQTT', 'warn');
           return;
         }
         startAutoSync();
@@ -1010,25 +850,13 @@
       }
     });
 
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden && autoSyncTimer) {
-        log('頁面隱藏，計時器仍運行（部分瀏覽器可能節流）', 'warn');
-      }
-    });
-
-    setBleUi(false);
-    setWifiUi(false);
+    setCloudUi(false);
     setLiveUi(false);
-    if (wifiHost) $('wifiHost').value = wifiHost;
-    updateM5PageLink();
-    $('wifiHost').addEventListener('input', updateM5PageLink);
-    setTransportMode(transportMode);
-
-    if (!window.isSecureContext) {
-      log('BLE 需要 HTTPS： https://sbgitdept.github.io/m5-bus-controller/', 'warn');
-    } else if (!navigator.bluetooth) {
-      log('此瀏覽器不支援 Web Bluetooth（可用 WiFi 模式）', 'warn');
-    }
+    const savedId = localStorage.getItem(DEVICE_ID_KEY) || '';
+    if (savedId) $('deviceId').value = savedId;
+    updateSendControls();
+    log('架構：Internet MQTT 雲端遠端控制（HiveMQ）', 'info');
+    log('請輸入 M5 螢幕左下角 Device ID，再按連線雲端', 'info');
 
     (async () => {
       const db = loadDb();
@@ -1045,9 +873,6 @@
           stopId: db.busB.stopId || DEFAULT_STOP_ID_B,
         }, 'B');
         log('已從本機 DB 還原車站設定', 'ok');
-        if (db.history.length > 0) {
-          log(`DB 記錄 ${db.history.length} 筆歷史設定`, 'info');
-        }
       }
     })();
   </script>
