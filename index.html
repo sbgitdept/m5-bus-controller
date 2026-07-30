@@ -33,9 +33,13 @@
   <header class="mb-6 text-center">
     <h1 class="text-2xl font-bold tracking-tight text-white">M5 Bus Controller</h1>
     <p class="mt-1 text-sm text-slate-400">雲端路線設定 · M5 直連九巴 ETA</p>
-    <div id="liveBadge" class="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-500">
+    <div id="liveBadge" class="mt-3 inline-flex flex-wrap items-center justify-center gap-2 rounded-full border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-500">
       <span id="liveDot" class="h-2 w-2 rounded-full bg-slate-600"></span>
       <span id="liveText">M5 Offline</span>
+      <span id="batteryBadge" class="hidden items-center gap-1 rounded-full border border-slate-600/80 bg-slate-950 px-2 py-0.5 text-[11px] font-medium text-slate-400">
+        <span id="batteryIcon">🔋</span>
+        <span id="batteryPct">--%</span>
+      </span>
     </div>
   </header>
 
@@ -66,7 +70,40 @@
       ☁ 連線雲端 Config
     </button>
     <p class="mt-2 text-xs text-slate-500">寫入 <code class="text-slate-400">m5bus/&lt;DeviceID&gt;/config</code>（retained）。M5 會訂閱並每約 60 秒輪詢；亦可放 JSON 到 Pages <code class="text-slate-400">devices/&lt;ID&gt;.json</code> 作次要 HTTP 輪詢。</p>
-    <p class="mt-1 text-xs text-slate-500">Broker：<code class="text-slate-400">broker.hivemq.com</code>（WSS）· 頂部徽章 = M5 Live status</p>
+    <p class="mt-1 text-xs text-slate-500">Broker：<code class="text-slate-400">broker.hivemq.com</code>（WSS）· 頂部徽章 = M5 Live + 電量</p>
+  </section>
+
+  <!-- WiFi Settings -->
+  <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
+    <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">WiFi 設定</h2>
+    <p id="wifiStatusLine" class="mb-3 rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-400">
+      M5 WiFi：等待連線…
+    </p>
+
+    <label class="mb-1 block text-xs text-slate-400" for="wifiPresetSelect">網絡</label>
+    <select id="wifiPresetSelect"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500">
+      <option value="0">DH</option>
+      <option value="1">iPhone</option>
+      <option value="2">Slimbeauty</option>
+      <option value="custom">自訂 SSID</option>
+    </select>
+
+    <div id="wifiCustomFields" class="mb-3 hidden">
+      <label class="mb-1 block text-xs text-slate-400" for="wifiSsidInput">自訂 SSID</label>
+      <input id="wifiSsidInput" type="text" maxlength="32" placeholder="輸入 WiFi 名稱"
+        class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
+    </div>
+
+    <label class="mb-1 block text-xs text-slate-400" for="wifiPasswordInput">密碼</label>
+    <input id="wifiPasswordInput" type="password" maxlength="16" placeholder="WiFi 密碼（Slimbeauty 預設 internet）"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
+
+    <button id="btnSendWifi" type="button"
+      class="w-full rounded-xl border border-violet-600/50 bg-violet-950 px-4 py-3 text-sm font-semibold text-violet-300 transition hover:bg-violet-900 disabled:cursor-not-allowed disabled:opacity-50">
+      📶 發送 WiFi 設定到 M5
+    </button>
+    <p class="mt-2 text-xs text-slate-500">經 MQTT <code class="text-slate-400">config</code> 傳送 <code class="text-slate-400">settings.wifi</code>；M5 會寫入 NVS 並即時重新連線。</p>
   </section>
 
   <!-- Route Config -->
@@ -178,11 +215,12 @@
   "v": 2,
   "busA": { "route", "stop", "svc", "bound", "name" },
   "busB": { "route", "stop", "svc", "bound", "name" },
-  "settings": { "bright": 0-3, "timeout": 0-3, "english": bool }
+  "settings": { "bright": 0-3, "timeout": 0-3, "english": bool,
+    "wifi": { "preset": 0-2, "ssid": "...", "password": "..." } }
 }</pre>
       <p class="mt-2"><span class="text-slate-400">cmd</span>（非 retained）：</p>
       <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off", "seq": 123 }</pre>
-      <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>busA</code>/<code>busB</code>、<code>settings</code>、<code>last_action</code></p>
+      <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>wifi_info</code>、<code>busA</code>/<code>busB</code>、<code>settings</code></p>
     </details>
   </section>
 
@@ -221,6 +259,8 @@
     const DEFAULT_ROUTE = '76K';
     const DEFAULT_STOP_ID_A = '68C988CE5394BAE7';
     const DEFAULT_STOP_ID_B = 'B0D79D5CE512B9EC';
+    const WIFI_PRESETS = ['DH', 'iPhone', 'Slimbeauty'];
+    const WIFI_DEFAULT_PASSWORDS = ['', '', 'internet'];
     const DB_KEY = 'm5-bus-db';
     const WIFI_HOST_KEY = 'm5-wifi-host';
     const TRANSPORT_KEY = 'm5-transport';
@@ -232,7 +272,7 @@
     function defaultDb() {
       return {
         v: DB_VERSION,
-        config: { autoSync: false, bright: 1, timeout: 1, english: false },
+        config: { autoSync: false, bright: 1, timeout: 1, english: false, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '' },
         busA: {
           route: DEFAULT_ROUTE,
           stopId: DEFAULT_STOP_ID_A,
@@ -423,6 +463,83 @@
     function topicCmd(id) { return `m5bus/${id}/cmd`; }
     function topicStatus(id) { return `m5bus/${id}/status`; }
 
+    function getWifiFromUi() {
+      const presetVal = $('wifiPresetSelect').value;
+      const password = $('wifiPasswordInput').value.trim();
+      if (presetVal === 'custom') {
+        return {
+          ssid: $('wifiSsidInput').value.trim(),
+          password,
+        };
+      }
+      const preset = Number(presetVal);
+      return {
+        preset,
+        ssid: WIFI_PRESETS[preset] || '',
+        password,
+      };
+    }
+
+    function applyWifiToUi(wifi = {}) {
+      if (wifi.preset != null && wifi.preset !== 255) {
+        $('wifiPresetSelect').value = String(wifi.preset);
+      } else if (wifi.ssid) {
+        const idx = WIFI_PRESETS.indexOf(wifi.ssid);
+        if (idx >= 0) {
+          $('wifiPresetSelect').value = String(idx);
+        } else {
+          $('wifiPresetSelect').value = 'custom';
+          $('wifiSsidInput').value = wifi.ssid;
+        }
+      }
+      toggleWifiCustomFields();
+      if (wifi.password) {
+        $('wifiPasswordInput').value = wifi.password;
+      }
+    }
+
+    function toggleWifiCustomFields() {
+      const custom = $('wifiPresetSelect').value === 'custom';
+      $('wifiCustomFields').classList.toggle('hidden', !custom);
+    }
+
+    function updateBatteryBadge(msg) {
+      const badge = $('batteryBadge');
+      const pctEl = $('batteryPct');
+      const iconEl = $('batteryIcon');
+      const pct = msg?.battery;
+      if (pct == null || pct < 0) {
+        badge.classList.add('hidden');
+        badge.classList.remove('inline-flex');
+        return;
+      }
+      badge.classList.remove('hidden');
+      badge.classList.add('inline-flex');
+      pctEl.textContent = `${pct}%`;
+      iconEl.textContent = msg.charging ? '⚡' : '🔋';
+      const color = pct < 20 ? 'text-red-400' : pct < 40 ? 'text-amber-400' : 'text-emerald-400';
+      pctEl.className = color;
+    }
+
+    function updateWifiStatusLine(msg) {
+      const el = $('wifiStatusLine');
+      if (!msg) {
+        el.textContent = 'M5 WiFi：等待連線…';
+        el.className = 'mb-3 rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-400';
+        return;
+      }
+      const info = msg.wifi_info || {};
+      const ssid = info.ssid || msg.wifi_ssid || '—';
+      const connected = info.connected ?? msg.wifi;
+      const rssi = info.rssi != null ? ` · ${info.rssi} dBm` : '';
+      el.textContent = connected
+        ? `M5 WiFi：已連線 ${ssid}${rssi}${msg.ip ? ` · ${msg.ip}` : ''}`
+        : `M5 WiFi：未連線（設定：${ssid}）`;
+      el.className = connected
+        ? 'mb-3 rounded-lg bg-emerald-950/50 px-3 py-2 text-xs text-emerald-300'
+        : 'mb-3 rounded-lg bg-amber-950/40 px-3 py-2 text-xs text-amber-300';
+    }
+
     function getSettingsFromUi() {
       return {
         bright: Number($('brightSelect').value),
@@ -442,6 +559,16 @@
 
     function applyM5StatusToUi(msg) {
       applySettingsToUi(msg?.settings);
+      if (msg?.wifi_info) {
+        applyWifiToUi({
+          preset: msg.wifi_info.preset,
+          ssid: msg.wifi_info.ssid,
+        });
+      } else if (msg?.wifi_ssid) {
+        applyWifiToUi({ ssid: msg.wifi_ssid });
+      }
+      updateBatteryBadge(msg);
+      updateWifiStatusLine(msg);
     }
 
     function buildAckMeta() {
@@ -466,6 +593,7 @@
       const connected = isTransportConnected();
       $('btnSend').disabled = !connected;
       $('btnSendSettings').disabled = !connected;
+      $('btnSendWifi').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
       $('btnReboot').disabled = !connected;
@@ -583,6 +711,8 @@
           const routeHint = msg.busA?.route ? ` · ${msg.busA.route}/${msg.busB?.route || '?'}` : '';
           const actionHint = msg.last_action ? ` · ${msg.last_action}` : '';
           setLiveUi(!!msg.live || !!msg.mqtt, `${detail}${routeHint}${actionHint}`);
+          updateBatteryBadge(msg);
+          updateWifiStatusLine(msg);
         } catch {
           lastStatusMs = Date.now();
           setLiveUi(true, id);
@@ -966,7 +1096,19 @@
           bound: variantB?.bound || 'I',
           name: compactDirLabel(variantB?.dest_tc || ''),
         },
-        settings,
+        settings: {
+          ...settings,
+          wifi: getWifiFromUi(),
+        },
+      });
+    }
+
+    function buildWifiOnlyJson() {
+      return JSON.stringify({
+        v: 2,
+        settings: {
+          wifi: getWifiFromUi(),
+        },
       });
     }
 
@@ -1020,6 +1162,36 @@
       log('已儲存設定至本機 DB', 'ok');
 
       $('lastPayload').textContent = `→ Cloud Config JSON (${payload.length} bytes)`;
+      $('lastPayload').classList.remove('hidden');
+      return payload;
+    }
+
+    async function sendWifiOnly() {
+      if (!isTransportConnected()) {
+        throw new Error('請先連線雲端 Config');
+      }
+      const wifi = getWifiFromUi();
+      if (wifi.preset == null && !wifi.ssid) {
+        throw new Error('請選擇或輸入 WiFi SSID');
+      }
+      if ($('wifiPresetSelect').value === 'custom' && !wifi.ssid) {
+        throw new Error('請輸入自訂 SSID');
+      }
+      const label = wifi.ssid || WIFI_PRESETS[wifi.preset] || 'WiFi';
+      log(`WiFi 設定：${label}`);
+      const payload = buildWifiOnlyJson();
+      const meta = buildAckMeta();
+      await sendPayloadToM5(payload, meta);
+      const db = loadDb();
+      db.config = {
+        ...db.config,
+        wifiPreset: $('wifiPresetSelect').value,
+        wifiPassword: $('wifiPasswordInput').value,
+        wifiCustomSsid: $('wifiSsidInput').value,
+      };
+      saveDb(db);
+      log('WiFi 設定已儲存至本機 DB', 'ok');
+      $('lastPayload').textContent = `→ WiFi JSON (${payload.length} bytes)`;
       $('lastPayload').classList.remove('hidden');
       return payload;
     }
@@ -1136,6 +1308,31 @@
       }
     });
 
+    $('btnSendWifi').addEventListener('click', async () => {
+      try {
+        await sendWifiOnly();
+      } catch (e) {
+        log(`WiFi 發送失敗：${e.message}`, 'err');
+      }
+    });
+
+    $('wifiPresetSelect').addEventListener('change', () => {
+      toggleWifiCustomFields();
+      const preset = $('wifiPresetSelect').value;
+      if (preset !== 'custom') {
+        const idx = Number(preset);
+        const defaultPwd = WIFI_DEFAULT_PASSWORDS[idx];
+        if (defaultPwd && !$('wifiPasswordInput').value) {
+          $('wifiPasswordInput').value = defaultPwd;
+        }
+      }
+      schedulePersistDb();
+    });
+
+    ['wifiSsidInput', 'wifiPasswordInput'].forEach((id) => {
+      $(id).addEventListener('input', () => schedulePersistDb());
+    });
+
     $('btnSendSettings').addEventListener('click', async () => {
       try {
         await sendSettingsOnly();
@@ -1199,6 +1396,16 @@
     (async () => {
       const db = loadDb();
       applySettingsToUi(db.config);
+      if (db.config.wifiPreset != null) {
+        $('wifiPresetSelect').value = String(db.config.wifiPreset);
+      }
+      if (db.config.wifiPassword) {
+        $('wifiPasswordInput').value = db.config.wifiPassword;
+      }
+      if (db.config.wifiCustomSsid) {
+        $('wifiSsidInput').value = db.config.wifiCustomSsid;
+      }
+      toggleWifiCustomFields();
       const ok = await loadKmbRoutes();
       if (ok) {
         await applyRouteSelection(db.busA.route || DEFAULT_ROUTE, {
