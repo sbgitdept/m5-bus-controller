@@ -218,7 +218,7 @@
         stopId: stopSelect.value.trim(),
         bound: variant?.bound || 'O',
         serviceType: variant?.service_type || '1',
-        stopName: variant?.dest_tc || '',
+        stopName: compactDirLabel(variant?.dest_tc || ''),
         variantLabel: variant ? `${variant.orig_tc} → ${variant.dest_tc}（服務 ${variant.service_type}）` : '',
       };
     }
@@ -488,6 +488,25 @@
 
     function boundToPath(bound) {
       return bound === 'I' ? 'inbound' : 'outbound';
+    }
+
+    // M5 column header: short destination (matches 76K 朗屏 / 上水 style).
+    function compactDirLabel(destTc) {
+      if (!destTc) return '';
+      const estate = destTc.match(/\(([^)]*邨)\)/);
+      if (estate) return estate[1];
+      const paren = destTc.match(/^([^()]+)\(([^)]+)\)$/);
+      if (paren) {
+        const outer = paren[1];
+        const inner = paren[2];
+        if (inner.length <= 2 || inner === '北' || inner === '南') return destTc;
+        if (inner.includes('邨')) return inner;
+        return outer;
+      }
+      if (destTc.endsWith('站')) return destTc.slice(0, -1);
+      if (destTc.endsWith('碼頭')) return destTc.slice(0, -2);
+      if (destTc.endsWith('邨')) return destTc.slice(0, -1);
+      return destTc;
     }
 
     function getRoute() {
@@ -780,10 +799,10 @@
 
       const svcA = getServiceType();
       const boundA = variant.bound || 'O';
-      const dirA = variant.dest_tc || '';
+      const dirA = compactDirLabel(variant.dest_tc || '');
       const svcB = getServiceTypeB();
       const boundB = variantB?.bound || 'I';
-      const dirB = variantB?.dest_tc || '';
+      const dirB = compactDirLabel(variantB?.dest_tc || '');
 
       const stopLabelA = $('stopSelect').selectedOptions[0]?.textContent || stopA;
       const stopLabelB = $('stopSelectB').selectedOptions[0]?.textContent || stopB;
