@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-HK" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>M5 Bus Controller</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: { DEFAULT: '#0f172a', card: '#1e293b', border: '#334155' }
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    html { color-scheme: dark; }
+    body { -webkit-tap-highlight-color: transparent; }
+    .status-dot { box-shadow: 0 0 8px currentColor; }
+  </style>
+</head>
+<body class="h-full bg-surface text-slate-100 antialiased">
+  <div class="mx-auto flex min-h-full max-w-lg flex-col px-4 py-6 pb-10">
+
+  <!-- Header -->
+  <header class="mb-6 text-center">
+    <h1 class="text-2xl font-bold tracking-tight text-white">M5 Bus Controller</h1>
+    <p class="mt-1 text-sm text-slate-400">九巴 ETA → M5StickS3 匙扣</p>
+  </header>
+
+  <!-- BLE Connection -->
+  <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
+    <div class="mb-3 flex items-center justify-between">
+      <span class="text-sm font-medium text-slate-300">藍牙狀態</span>
+      <div id="bleStatus" class="flex items-center gap-2 text-sm text-slate-500">
+        <span id="bleDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
+        <span id="bleLabel">未連線</span>
+      </div>
+    </div>
+    <button id="btnConnect"
+      class="w-full rounded-xl bg-blue-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
+      🔵 連線 M5 匙扣 (BLE)
+    </button>
+    <p class="mt-2 text-xs text-slate-500">裝置名稱：<code class="text-slate-400">M5-Bus</code> · 請用 <a href="https://sbgitdept.github.io/M5StickS3/" class="text-blue-400 underline">HTTPS 網址</a> 開啟（Web Bluetooth 需要）</p>
+  </section>
+
+  <!-- Route Config -->
+  <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
+    <div class="mb-3 flex items-center justify-between gap-2">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">左欄 (方向 A)</h2>
+      <button id="btnRefreshRoutes" type="button"
+        class="shrink-0 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">
+        🔄 同步九巴
+      </button>
+    </div>
+    <p id="kmbSyncStatus" class="mb-3 text-xs text-slate-500">正在載入九巴路線資料…</p>
+
+    <label class="mb-1 block text-xs text-slate-400" for="routeInput">路線</label>
+    <input id="routeInput" list="routeList" type="text" placeholder="搜尋路線，例：76K"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+    <datalist id="routeList"></datalist>
+
+    <label class="mb-1 block text-xs text-slate-400" for="variantSelect">方向 / 服務班次</label>
+    <select id="variantSelect" disabled
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50">
+      <option value="">請先選擇路線</option>
+    </select>
+
+    <label class="mb-1 block text-xs text-slate-400" for="stopSelect">車站</label>
+    <select id="stopSelect" disabled
+      class="mb-1 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50">
+      <option value="">請先選擇方向</option>
+    </select>
+    <p id="stopMeta" class="mb-4 font-mono text-xs text-slate-500"></p>
+
+    <h3 class="mb-2 text-sm font-semibold text-slate-400">右欄 (方向 B)</h3>
+    <label class="mb-1 block text-xs text-slate-400" for="routeInputB">路線</label>
+    <input id="routeInputB" list="routeList" type="text" placeholder="例：76K"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+
+    <label class="mb-1 block text-xs text-slate-400" for="variantSelectB">方向 / 服務班次</label>
+    <select id="variantSelectB" disabled
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50">
+      <option value="">請先選擇路線</option>
+    </select>
+
+    <label class="mb-1 block text-xs text-slate-400" for="stopSelectB">車站</label>
+    <select id="stopSelectB" disabled
+      class="mb-1 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50">
+      <option value="">請先選擇方向</option>
+    </select>
+    <p id="stopMetaB" class="mb-4 font-mono text-xs text-slate-500"></p>
+
+    <button id="btnSend"
+      class="w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
+      發送設定到 M5
+    </button>
+  </section>
+
+  <!-- Auto Sync -->
+  <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
+    <div class="flex items-center justify-between">
+      <div>
+        <p class="font-medium text-white">自動同步 (30秒)</p>
+        <p class="text-xs text-slate-500">開啟後每 30 秒抓取 API 並推送到 M5</p>
+      </div>
+      <label class="relative inline-flex cursor-pointer items-center">
+        <input id="autoSync" type="checkbox" class="peer sr-only" />
+        <div class="peer h-7 w-12 rounded-full bg-slate-700 after:absolute after:left-[2px] after:top-[2px] after:h-6 after:w-6 after:rounded-full after:bg-white after:transition-all peer-checked:bg-blue-600 peer-checked:after:translate-x-5 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500"></div>
+      </label>
+    </div>
+  </section>
+
+  <!-- Status Log -->
+  <section class="flex-1 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
+    <h2 class="mb-2 text-sm font-semibold text-slate-400">同步記錄</h2>
+    <div id="log" class="min-h-[120px] space-y-2 font-mono text-xs text-slate-400">
+      <p class="text-slate-600">— 等待操作 —</p>
+    </div>
+    <div id="lastPayload" class="mt-3 hidden rounded-lg bg-slate-900 px-3 py-2 font-mono text-xs text-emerald-400"></div>
+  </section>
+
+  </div>
+
+  <script>
+    const BLE_DEVICE_NAME = 'M5-Bus';
+    const BLE_SERVICE_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+    const BLE_CHAR_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+    const KMB_BASE = 'https://data.etabus.gov.hk/v1/transport/kmb';
+    const KMB_ETA_BASE = `${KMB_BASE}/eta`;
+    const AUTO_SYNC_MS = 30_000;
+    const DEFAULT_ROUTE = '76K';
+    const DEFAULT_STOP_ID_A = '68C988CE5394BAE7';
+    const DEFAULT_STOP_ID_B = 'B0D79D5CE512B9EC';
+
+    const $ = (id) => document.getElementById(id);
+
+    let bleDevice = null;
+    let bleChar = null;
+    let autoSyncTimer = null;
+    let kmbRoutes = [];
+    let kmbRouteNumbers = [];
+    let kmbGeneratedAt = '';
+    let stopLoadToken = 0;
+
+    function log(msg, type = 'info') {
+      const el = $('log');
+      const time = new Date().toLocaleTimeString('zh-HK', { hour12: false });
+      const colors = { info: 'text-slate-400', ok: 'text-emerald-400', err: 'text-red-400', warn: 'text-amber-400' };
+      const line = document.createElement('p');
+      line.className = colors[type] || colors.info;
+      line.textContent = `[${time}] ${msg}`;
+      if (el.firstChild?.textContent?.includes('等待操作')) el.innerHTML = '';
+      el.prepend(line);
+      while (el.children.length > 20) el.removeChild(el.lastChild);
+    }
+
+    function setBleUi(connected) {
+      const dot = $('bleDot');
+      const label = $('bleLabel');
+      const btn = $('btnConnect');
+      if (connected) {
+        dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-emerald-400';
+        label.textContent = '已連線';
+        label.className = 'text-emerald-400';
+        btn.textContent = '🔴 中斷連線';
+      } else {
+        dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-slate-600';
+        label.textContent = '未連線';
+        label.className = 'text-slate-500';
+        btn.textContent = '🔵 連線 M5 匙扣 (BLE)';
+      }
+      $('btnSend').disabled = !connected;
+      $('autoSync').disabled = !connected;
+    }
+
+    function sortRouteNo(a, b) {
+      const na = a.match(/^(\d+)(.*)$/);
+      const nb = b.match(/^(\d+)(.*)$/);
+      if (na && nb) {
+        const d = parseInt(na[1], 10) - parseInt(nb[1], 10);
+        return d !== 0 ? d : na[2].localeCompare(nb[2]);
+      }
+      return a.localeCompare(b);
+    }
+
+    function boundToPath(bound) {
+      return bound === 'I' ? 'inbound' : 'outbound';
+    }
+
+    function getRoute() {
+      return $('routeInput').value.trim().toUpperCase();
+    }
+
+    function getSelectedVariant() {
+      const idx = $('variantSelect').value;
+      if (idx === '') return null;
+      return getVariants(getRoute())[Number(idx)] || null;
+    }
+
+    function getStopId() {
+      return $('stopSelect').value.trim();
+    }
+
+    function getServiceType() {
+      const variant = getSelectedVariant();
+      return variant ? variant.service_type : '1';
+    }
+
+    function getRouteB() {
+      return $('routeInputB').value.trim().toUpperCase();
+    }
+
+    function getSelectedVariantB() {
+      const idx = $('variantSelectB').value;
+      if (idx === '') return null;
+      return getVariants(getRouteB())[Number(idx)] || null;
+    }
+
+    function getStopIdB() {
+      return $('stopSelectB').value.trim();
+    }
+
+    function getServiceTypeB() {
+      const variant = getSelectedVariantB();
+      return variant ? variant.service_type : '1';
+    }
+
+    function getVariants(route) {
+      return kmbRoutes.filter((item) => item.route === route);
+    }
+
+    function setKmbStatus(text, type = 'info') {
+      const el = $('kmbSyncStatus');
+      el.textContent = text;
+      el.className = 'mb-3 text-xs ' + ({
+        info: 'text-slate-500',
+        ok: 'text-emerald-400',
+        err: 'text-red-400',
+        warn: 'text-amber-400',
+      }[type] || 'text-slate-500');
+    }
+
+    function populateRouteDatalist() {
+      const list = $('routeList');
+      list.innerHTML = '';
+      for (const route of kmbRouteNumbers) {
+        const opt = document.createElement('option');
+        opt.value = route;
+        list.appendChild(opt);
+      }
+    }
+
+    function populateVariants(route, preferredBound = 'O', preferredService = '1', suffix = '') {
+      const select = $('variantSelect' + suffix);
+      const variants = getVariants(route);
+      select.innerHTML = '';
+
+      if (variants.length === 0) {
+        select.disabled = true;
+        select.innerHTML = '<option value="">找不到此路線</option>';
+        resetStops(suffix, '請先選擇路線');
+        return;
+      }
+
+      let defaultIdx = 0;
+      variants.forEach((item, idx) => {
+        const opt = document.createElement('option');
+        opt.value = String(idx);
+        opt.textContent = `${item.orig_tc} → ${item.dest_tc}（服務 ${item.service_type}）`;
+        select.appendChild(opt);
+        if (item.bound === preferredBound && item.service_type === preferredService) {
+          defaultIdx = idx;
+        }
+      });
+
+      select.disabled = false;
+      select.value = String(defaultIdx);
+    }
+
+    function resetStops(suffix = '', message = '請先選擇方向') {
+      const select = $('stopSelect' + suffix);
+      select.innerHTML = `<option value="">${message}</option>`;
+      select.disabled = true;
+      $('stopMeta' + suffix).textContent = '';
+    }
+
+    async function fetchStopName(stopId) {
+      const res = await fetch(`${KMB_BASE}/stop/${encodeURIComponent(stopId)}`);
+      if (!res.ok) return stopId;
+      const json = await res.json();
+      return json.data?.name_tc || json.data?.name_en || stopId;
+    }
+
+    async function loadStopsForVariant(variant, preferredStopId = '', suffix = '') {
+      if (!variant) {
+        resetStops(suffix);
+        return;
+      }
+
+      const token = ++stopLoadToken;
+      const select = $('stopSelect' + suffix);
+      select.disabled = true;
+      select.innerHTML = '<option value="">載入車站中…</option>';
+      $('stopMeta' + suffix).textContent = '';
+
+      const path = boundToPath(variant.bound);
+      const url = `${KMB_BASE}/route-stop/${encodeURIComponent(variant.route)}/${path}/${variant.service_type}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`車站列表 HTTP ${res.status}`);
+
+      const json = await res.json();
+      const rows = Array.isArray(json.data) ? json.data.slice() : [];
+      rows.sort((a, b) => Number(a.seq) - Number(b.seq));
+
+      if (token !== stopLoadToken) return;
+
+      const names = await Promise.all(rows.map(async (row) => {
+        const name = await fetchStopName(row.stop);
+        return { ...row, name_tc: name };
+      }));
+
+      if (token !== stopLoadToken) return;
+
+      select.innerHTML = '';
+      let defaultIdx = 0;
+      names.forEach((row, idx) => {
+        const opt = document.createElement('option');
+        opt.value = row.stop;
+        opt.textContent = `${row.seq}. ${row.name_tc}`;
+        select.appendChild(opt);
+        if (row.stop === preferredStopId) defaultIdx = idx;
+      });
+
+      select.disabled = names.length === 0;
+      if (names.length === 0) {
+        select.innerHTML = '<option value="">此方向無車站資料</option>';
+        return;
+      }
+
+      select.selectedIndex = defaultIdx;
+      updateStopMeta(suffix);
+    }
+
+    function updateStopMeta(suffix = '') {
+      const stopId = suffix ? getStopIdB() : getStopId();
+      const variant = suffix ? getSelectedVariantB() : getSelectedVariant();
+      const meta = $('stopMeta' + suffix);
+      if (!stopId || !variant) {
+        meta.textContent = '';
+        return;
+      }
+      const opt = $('stopSelect' + suffix).selectedOptions[0];
+      meta.textContent = `Stop ID: ${stopId} · ${variant.route} 服務${variant.service_type}`;
+      if (opt) meta.textContent += ` · ${opt.textContent}`;
+    }
+
+    async function applyRouteSelection(route, options = {}, suffix = '') {
+      const input = suffix ? $('routeInputB') : $('routeInput');
+      const normalized = route.trim().toUpperCase();
+      input.value = normalized;
+
+      if (!normalized) {
+        $('variantSelect' + suffix).disabled = true;
+        $('variantSelect' + suffix).innerHTML = '<option value="">請先選擇路線</option>';
+        resetStops(suffix);
+        return;
+      }
+
+      if (!kmbRouteNumbers.includes(normalized)) {
+        if (!suffix) setKmbStatus(`路線 ${normalized} 不在九巴資料庫`, 'warn');
+        $('variantSelect' + suffix).disabled = true;
+        $('variantSelect' + suffix).innerHTML = '<option value="">找不到此路線</option>';
+        resetStops(suffix);
+        return;
+      }
+
+      populateVariants(
+        normalized,
+        options.bound || 'O',
+        options.serviceType || '1',
+        suffix,
+      );
+
+      const variant = suffix ? getSelectedVariantB() : getSelectedVariant();
+      await loadStopsForVariant(variant, options.stopId || '', suffix);
+      if (!suffix) {
+        setKmbStatus(`已同步 ${normalized} · 九巴資料 ${kmbGeneratedAt || ''}`, 'ok');
+      }
+    }
+
+    async function loadKmbRoutes() {
+      setKmbStatus('正在載入九巴路線資料…', 'info');
+      $('btnRefreshRoutes').disabled = true;
+
+      try {
+        const res = await fetch(`${KMB_BASE}/route`);
+        if (!res.ok) throw new Error(`路線列表 HTTP ${res.status}`);
+        const json = await res.json();
+        kmbRoutes = Array.isArray(json.data) ? json.data : [];
+        kmbRouteNumbers = [...new Set(kmbRoutes.map((item) => item.route))].sort(sortRouteNo);
+        kmbGeneratedAt = json.generated_timestamp
+          ? new Date(json.generated_timestamp).toLocaleString('zh-HK', { hour12: false })
+          : '';
+        populateRouteDatalist();
+        setKmbStatus(`已載入 ${kmbRouteNumbers.length} 條路線 · ${kmbGeneratedAt}`, 'ok');
+        log(`九巴路線已同步（${kmbRouteNumbers.length} 條）`, 'ok');
+        return true;
+      } catch (e) {
+        setKmbStatus(`九巴同步失敗：${e.message}`, 'err');
+        log(`九巴路線同步失敗：${e.message}`, 'err');
+        return false;
+      } finally {
+        $('btnRefreshRoutes').disabled = false;
+      }
+    }
+
+    function parseIsoMinutes(iso, nowMs) {
+      if (!iso) return -1;
+      const t = Date.parse(iso);
+      if (Number.isNaN(t)) return -1;
+      const diffSec = (t - nowMs) / 1000;
+      if (diffSec < 0) return 0;
+      return Math.round(diffSec / 60);
+    }
+
+    async function fetchKmbEta(stopId, route, serviceType = '1') {
+      const url = `${KMB_ETA_BASE}/${encodeURIComponent(stopId)}/${encodeURIComponent(route)}/${encodeURIComponent(serviceType)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`API HTTP ${res.status}`);
+      const json = await res.json();
+      const data = json.data;
+      if (!Array.isArray(data) || data.length === 0) throw new Error('API 無 ETA 資料');
+
+      const nowMs = json.generated_timestamp
+        ? Date.parse(json.generated_timestamp)
+        : Date.now();
+
+      let min1 = -1;
+      let min2 = -1;
+      for (const item of data) {
+        const seq = item.eta_seq;
+        const mins = parseIsoMinutes(item.eta, nowMs);
+        if (mins < 0) continue;
+        if (seq === 1) min1 = mins;
+        else if (seq === 2) min2 = mins;
+      }
+      if (min1 < 0) {
+        min1 = parseIsoMinutes(data[0].eta, nowMs);
+        if (data.length > 1 && min2 < 0) {
+          min2 = parseIsoMinutes(data[1].eta, nowMs);
+        }
+      }
+      if (min1 < 0) throw new Error('無法計算到站分鐘');
+      if (min2 < 0) min2 = min1;
+
+      return { min1, min2 };
+    }
+
+    function buildPayload(routeA, stopA, routeB, stopB) {
+      return `DUALBUS|${routeA}|${stopA}|${routeB}|${stopB}`;
+    }
+
+    async function sendToM5() {
+      const routeA = getRoute();
+      const stopA = getStopId();
+      const routeB = ($('routeInputB').value.trim().toUpperCase()) || routeA;
+      const stopB = $('stopSelectB').value.trim();
+      const variant = getSelectedVariant();
+      if (!routeA) throw new Error('請輸入左欄路線');
+      if (!variant) throw new Error('請選擇左欄方向 / 服務班次');
+      if (!stopA) throw new Error('請選擇左欄車站');
+      if (!stopB) throw new Error('請選擇右欄車站');
+      if (!bleChar) throw new Error('請先連接 BLE');
+
+      const stopLabelA = $('stopSelect').selectedOptions[0]?.textContent || stopA;
+      const stopLabelB = $('stopSelectB').selectedOptions[0]?.textContent || stopB;
+      log(`設定左欄 ${routeA} · ${stopLabelA}`);
+      log(`設定右欄 ${routeB} · ${stopLabelB}`);
+      const payload = buildPayload(routeA, stopA, routeB, stopB);
+
+      const encoder = new TextEncoder();
+      await bleChar.writeValue(encoder.encode(payload));
+
+      $('lastPayload').textContent = `→ ${payload}`;
+      $('lastPayload').classList.remove('hidden');
+      log(`已發送 ${payload}`, 'ok');
+      return payload;
+    }
+
+    async function connectBle() {
+      if (!navigator.bluetooth) {
+        throw new Error('此瀏覽器不支援 Web Bluetooth（請用 Chrome / Edge）');
+      }
+
+      log('搜尋 M5-Bus…');
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ name: BLE_DEVICE_NAME }],
+        optionalServices: [BLE_SERVICE_UUID],
+      });
+
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+
+      log('連接 GATT…');
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+      bleChar = await service.getCharacteristic(BLE_CHAR_UUID);
+
+      bleDevice = device;
+      setBleUi(true);
+      log(`已連線：${device.name}`, 'ok');
+    }
+
+    function disconnectBle() {
+      if (bleDevice?.gatt?.connected) {
+        bleDevice.gatt.disconnect();
+      }
+      onDisconnected();
+    }
+
+    function onDisconnected() {
+      bleDevice = null;
+      bleChar = null;
+      setBleUi(false);
+      stopAutoSync();
+      $('autoSync').checked = false;
+      log('BLE 已中斷', 'warn');
+    }
+
+    function startAutoSync() {
+      stopAutoSync();
+      autoSyncTimer = setInterval(async () => {
+        try {
+          await sendToM5();
+        } catch (e) {
+          log(`自動同步失敗：${e.message}`, 'err');
+        }
+      }, AUTO_SYNC_MS);
+      log('自動同步已啟動（30秒）', 'ok');
+    }
+
+    function stopAutoSync() {
+      if (autoSyncTimer) {
+        clearInterval(autoSyncTimer);
+        autoSyncTimer = null;
+        log('自動同步已停止', 'warn');
+      }
+    }
+
+    let routeInputTimer = null;
+    $('routeInput').addEventListener('input', () => {
+      clearTimeout(routeInputTimer);
+      routeInputTimer = setTimeout(() => {
+        applyRouteSelection(getRoute()).catch((e) => log(`路線載入失敗：${e.message}`, 'err'));
+      }, 400);
+    });
+
+    $('routeInput').addEventListener('change', () => {
+      applyRouteSelection(getRoute()).catch((e) => log(`路線載入失敗：${e.message}`, 'err'));
+    });
+
+    $('variantSelect').addEventListener('change', () => {
+      loadStopsForVariant(getSelectedVariant()).catch((e) => log(`車站載入失敗：${e.message}`, 'err'));
+    });
+
+    $('stopSelect').addEventListener('change', () => updateStopMeta());
+
+    let routeInputBTimer = null;
+    $('routeInputB').addEventListener('input', () => {
+      clearTimeout(routeInputBTimer);
+      routeInputBTimer = setTimeout(() => {
+        applyRouteSelection(getRouteB(), {}, 'B').catch((e) => log(`右欄路線載入失敗：${e.message}`, 'err'));
+      }, 400);
+    });
+    $('routeInputB').addEventListener('change', () => {
+      applyRouteSelection(getRouteB(), {}, 'B').catch((e) => log(`右欄路線載入失敗：${e.message}`, 'err'));
+    });
+    $('variantSelectB').addEventListener('change', () => {
+      loadStopsForVariant(getSelectedVariantB(), '', 'B').catch((e) => log(`右欄車站載入失敗：${e.message}`, 'err'));
+    });
+    $('stopSelectB').addEventListener('change', () => updateStopMeta('B'));
+
+    $('btnRefreshRoutes').addEventListener('click', async () => {
+      const ok = await loadKmbRoutes();
+      if (ok) {
+        await applyRouteSelection(getRoute() || DEFAULT_ROUTE, {
+          bound: getSelectedVariant()?.bound || 'O',
+          serviceType: getServiceType(),
+          stopId: getStopId(),
+        });
+      }
+    });
+
+    $('btnConnect').addEventListener('click', async () => {
+      try {
+        if (bleDevice?.gatt?.connected) {
+          disconnectBle();
+          return;
+        }
+        await connectBle();
+      } catch (e) {
+        if (e.name !== 'NotFoundError') {
+          log(`連線失敗：${e.message}`, 'err');
+        }
+      }
+    });
+
+    $('btnSend').addEventListener('click', async () => {
+      try {
+        await sendToM5();
+      } catch (e) {
+        log(`發送失敗：${e.message}`, 'err');
+      }
+    });
+
+    $('autoSync').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        if (!bleChar) {
+          e.target.checked = false;
+          log('請先連接 BLE', 'warn');
+          return;
+        }
+        startAutoSync();
+        sendToM5().catch((err) => log(`首次同步失敗：${err.message}`, 'err'));
+      } else {
+        stopAutoSync();
+      }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && autoSyncTimer) {
+        log('頁面隱藏，計時器仍運行（部分瀏覽器可能節流）', 'warn');
+      }
+    });
+
+    setBleUi(false);
+
+    if (!window.isSecureContext) {
+      log('手機藍牙需要 HTTPS： https://sbgitdept.github.io/M5StickS3/', 'warn');
+    } else if (!navigator.bluetooth) {
+      log('此瀏覽器不支援 Web Bluetooth', 'warn');
+    }
+
+    (async () => {
+      const ok = await loadKmbRoutes();
+      if (ok) {
+        await applyRouteSelection(DEFAULT_ROUTE, {
+          bound: 'O',
+          serviceType: '1',
+          stopId: DEFAULT_STOP_ID_A,
+        });
+        await applyRouteSelection(DEFAULT_ROUTE, {
+          bound: 'I',
+          serviceType: '1',
+          stopId: DEFAULT_STOP_ID_B,
+        }, 'B');
+      }
+    })();
+  </script>
+</body>
+</html>
