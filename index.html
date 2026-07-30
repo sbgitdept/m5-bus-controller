@@ -137,8 +137,93 @@
     const DEFAULT_ROUTE = '76K';
     const DEFAULT_STOP_ID_A = '68C988CE5394BAE7';
     const DEFAULT_STOP_ID_B = 'B0D79D5CE512B9EC';
+    const DB_KEY = 'm5-bus-db';
+    const DB_VERSION = 1;
+    const DB_HISTORY_MAX = 12;
 
     const $ = (id) => document.getElementById(id);
+
+    function defaultDb() {
+      return {
+        v: DB_VERSION,
+        config: { autoSync: false },
+        busA: {
+          route: DEFAULT_ROUTE,
+          stopId: DEFAULT_STOP_ID_A,
+          bound: 'O',
+          serviceType: '1',
+          stopName: '',
+          variantLabel: '',
+        },
+        busB: {
+          route: DEFAULT_ROUTE,
+          stopId: DEFAULT_STOP_ID_B,
+          bound: 'I',
+          serviceType: '1',
+          stopName: '',
+          variantLabel: '',
+        },
+        history: [],
+      };
+    }
+
+    function loadDb() {
+      try {
+        const raw = localStorage.getItem(DB_KEY);
+        if (!raw) return defaultDb();
+        const db = JSON.parse(raw);
+        if (!db || db.v !== DB_VERSION) return defaultDb();
+        db.busA = { ...defaultDb().busA, ...(db.busA || {}) };
+        db.busB = { ...defaultDb().busB, ...(db.busB || {}) };
+        db.history = Array.isArray(db.history) ? db.history : [];
+        db.config = { ...defaultDb().config, ...(db.config || {}) };
+        return db;
+      } catch {
+        return defaultDb();
+      }
+    }
+
+    function saveDb(db) {
+      localStorage.setItem(DB_KEY, JSON.stringify(db));
+    }
+
+    function snapshotBus(side) {
+      const suffix = side === 'B' ? 'B' : '';
+      const variant = side === 'B' ? getSelectedVariantB() : getSelectedVariant();
+      const stopSelect = $('stopSelect' + suffix);
+      return {
+        route: side === 'B' ? getRouteB() : getRoute(),
+        stopId: stopSelect.value.trim(),
+        bound: variant?.bound || 'O',
+        serviceType: variant?.service_type || '1',
+        stopName: stopSelect.selectedOptions[0]?.textContent || '',
+        variantLabel: variant ? `${variant.orig_tc} → ${variant.dest_tc}（服務 ${variant.service_type}）` : '',
+      };
+    }
+
+    function persistDbFromUi() {
+      const db = loadDb();
+      db.busA = snapshotBus('A');
+      db.busB = snapshotBus('B');
+      saveDb(db);
+    }
+
+    function pushHistory(db) {
+      const entry = {
+        ts: new Date().toISOString(),
+        busA: { ...db.busA },
+        busB: { ...db.busB },
+      };
+      db.history = [entry, ...(db.history || [])].slice(0, DB_HISTORY_MAX);
+    }
+
+    let persistDbTimer = null;
+    function schedulePersistDb() {
+      clearTimeout(persistDbTimer);
+      persistDbTimer = setTimeout(() => {
+        try { persistDbFromUi(); } catch { /* ignore incomplete form */ }
+      }, 500);
+    }
 
     let bleDevice = null;
     let bleChar = null;
@@ -462,8 +547,8 @@
       return { min1, min2 };
     }
 
-    function buildPayload(routeA, stopA, routeB, stopB) {
-      return `DUALBUS|${routeA}|${stopA}|${routeB}|${stopB}`;
+    function buildPayload(routeA, stopA, svcA, boundA, routeB, stopB, svcB, boundB) {
+      return `DUALBUS2|${routeA}|${stopA}|${svcA}|${boundA}|${routeB}|${stopB}|${svcB}|${boundB}`;
     }
 
     async function sendToM5() {
@@ -472,20 +557,33 @@
       const routeB = ($('routeInputB').value.trim().toUpperCase()) || routeA;
       const stopB = $('stopSelectB').value.trim();
       const variant = getSelectedVariant();
+      const variantB = getSelectedVariantB();
       if (!routeA) throw new Error('請輸入左欄路線');
       if (!variant) throw new Error('請選擇左欄方向 / 服務班次');
       if (!stopA) throw new Error('請選擇左欄車站');
       if (!stopB) throw new Error('請選擇右欄車站');
       if (!bleChar) throw new Error('請先連接 BLE');
 
+      const svcA = getServiceType();
+      const boundA = variant.bound || 'O';
+      const svcB = getServiceTypeB();
+      const boundB = variantB?.bound || 'I';
+
       const stopLabelA = $('stopSelect').selectedOptions[0]?.textContent || stopA;
       const stopLabelB = $('stopSelectB').selectedOptions[0]?.textContent || stopB;
-      log(`設定左欄 ${routeA} · ${stopLabelA}`);
-      log(`設定右欄 ${routeB} · ${stopLabelB}`);
-      const payload = buildPayload(routeA, stopA, routeB, stopB);
+      log(`設定左欄 ${routeA} · ${stopLabelA} · 服務${svcA}`);
+      log(`設定右欄 ${routeB} · ${stopLabelB} · 服務${svcB}`);
+      const payload = buildPayload(routeA, stopA, svcA, boundA, routeB, stopB, svcB, boundB);
 
       const encoder = new TextEncoder();
       await bleChar.writeValue(encoder.encode(payload));
+
+      const db = loadDb();
+      db.busA = snapshotBus('A');
+      db.busB = snapshotBus('B');
+      pushHistory(db);
+      saveDb(db);
+      log('已儲存設定至本機 DB', 'ok');
 
       $('lastPayload').textContent = `→ ${payload}`;
       $('lastPayload').classList.remove('hidden');
@@ -566,9 +664,13 @@
 
     $('variantSelect').addEventListener('change', () => {
       loadStopsForVariant(getSelectedVariant()).catch((e) => log(`車站載入失敗：${e.message}`, 'err'));
+      schedulePersistDb();
     });
 
-    $('stopSelect').addEventListener('change', () => updateStopMeta());
+    $('stopSelect').addEventListener('change', () => {
+      updateStopMeta();
+      schedulePersistDb();
+    });
 
     let routeInputBTimer = null;
     $('routeInputB').addEventListener('input', () => {
@@ -582,8 +684,12 @@
     });
     $('variantSelectB').addEventListener('change', () => {
       loadStopsForVariant(getSelectedVariantB(), '', 'B').catch((e) => log(`右欄車站載入失敗：${e.message}`, 'err'));
+      schedulePersistDb();
     });
-    $('stopSelectB').addEventListener('change', () => updateStopMeta('B'));
+    $('stopSelectB').addEventListener('change', () => {
+      updateStopMeta('B');
+      schedulePersistDb();
+    });
 
     $('btnRefreshRoutes').addEventListener('click', async () => {
       const ok = await loadKmbRoutes();
@@ -647,18 +753,23 @@
     }
 
     (async () => {
+      const db = loadDb();
       const ok = await loadKmbRoutes();
       if (ok) {
-        await applyRouteSelection(DEFAULT_ROUTE, {
-          bound: 'O',
-          serviceType: '1',
-          stopId: DEFAULT_STOP_ID_A,
+        await applyRouteSelection(db.busA.route || DEFAULT_ROUTE, {
+          bound: db.busA.bound || 'O',
+          serviceType: db.busA.serviceType || '1',
+          stopId: db.busA.stopId || DEFAULT_STOP_ID_A,
         });
-        await applyRouteSelection(DEFAULT_ROUTE, {
-          bound: 'I',
-          serviceType: '1',
-          stopId: DEFAULT_STOP_ID_B,
+        await applyRouteSelection(db.busB.route || DEFAULT_ROUTE, {
+          bound: db.busB.bound || 'I',
+          serviceType: db.busB.serviceType || '1',
+          stopId: db.busB.stopId || DEFAULT_STOP_ID_B,
         }, 'B');
+        log('已從本機 DB 還原車站設定', 'ok');
+        if (db.history.length > 0) {
+          log(`DB 記錄 ${db.history.length} 筆歷史設定`, 'info');
+        }
       }
     })();
   </script>
