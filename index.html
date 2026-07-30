@@ -206,12 +206,12 @@
       <option value="1">English</option>
     </select>
 
-    <label class="mb-1 block text-xs text-slate-400" for="displayModeSelect">顯示模式／方向</label>
+    <label class="mb-1 block text-xs text-slate-400" for="displayModeSelect">Display Mode / 顯示模式</label>
     <select id="displayModeSelect"
       class="mb-4 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-      <option value="0" selected>自動（IMU 感應）</option>
-      <option value="1">強制橫向（Horizontal）</option>
-      <option value="2">強制直向（Vertical）</option>
+      <option value="0" selected>Auto (IMU Sensor) · 自動（IMU 感應）</option>
+      <option value="1">Force Landscape (Horizontal) · 強制橫向</option>
+      <option value="2">Force Portrait (Vertical) · 強制直向</option>
     </select>
 
     <h3 class="mb-2 text-sm font-semibold text-slate-400">遠端操作</h3>
@@ -241,7 +241,7 @@
     "display_mode": 0|1|2,
     "wifi": { "preset": 0-2, "ssid": "...", "password": "..." } }
 }</pre>
-      <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=自動(IMU) · 1=強制橫向 · 2=強制直向</p>
+      <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=Auto(IMU 4-way 0°/90°/180°/270°) · 1=Force Landscape · 2=Force Portrait</p>
       <p class="mt-2"><span class="text-slate-400">cmd</span>（非 retained）：</p>
       <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off", "seq": 123 }</pre>
       <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>wifi_info</code>、<code>busA</code>/<code>busB</code>、<code>settings</code></p>
@@ -576,7 +576,7 @@
         : 'mb-3 rounded-lg bg-amber-950/40 px-3 py-2 text-xs text-amber-300';
     }
 
-    const DISPLAY_MODE_LABELS = ['自動(IMU)', '強制橫向', '強制直向'];
+    const DISPLAY_MODE_LABELS = ['Auto (IMU)', 'Force Landscape', 'Force Portrait'];
 
     function getSettingsFromUi() {
       return {
