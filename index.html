@@ -33,20 +33,52 @@
     <p class="mt-1 text-sm text-slate-400">九巴 ETA → M5StickS3 匙扣</p>
   </header>
 
-  <!-- BLE Connection -->
+  <!-- Connection: BLE or WiFi -->
   <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
-    <div class="mb-3 flex items-center justify-between">
-      <span class="text-sm font-medium text-slate-300">藍牙狀態</span>
-      <div id="bleStatus" class="flex items-center gap-2 text-sm text-slate-500">
-        <span id="bleDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
-        <span id="bleLabel">未連線</span>
-      </div>
+    <div class="mb-3 flex rounded-xl bg-slate-900 p-1">
+      <button id="modeBle" type="button"
+        class="flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition bg-blue-600 text-white">
+        藍牙 BLE
+      </button>
+      <button id="modeWifi" type="button"
+        class="flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition text-slate-400 hover:text-white">
+        WiFi 網絡
+      </button>
     </div>
-    <button id="btnConnect"
-      class="w-full rounded-xl bg-blue-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
-      🔵 連線 M5 匙扣 (BLE)
-    </button>
-    <p class="mt-2 text-xs text-slate-500">裝置名稱：<code class="text-slate-400">M5-Bus</code> · 請用 <a href="https://sbgitdept.github.io/m5-bus-controller/" class="text-blue-400 underline">HTTPS 網址</a> 開啟（Web Bluetooth 需要）</p>
+
+    <div id="panelBle">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="text-sm font-medium text-slate-300">藍牙狀態</span>
+        <div class="flex items-center gap-2 text-sm text-slate-500">
+          <span id="bleDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
+          <span id="bleLabel">未連線</span>
+        </div>
+      </div>
+      <button id="btnConnect"
+        class="w-full rounded-xl bg-blue-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
+        🔵 連線 M5 匙扣 (BLE)
+      </button>
+      <p class="mt-2 text-xs text-slate-500">裝置名稱：<code class="text-slate-400">M5-Bus</code> · 需用 <a href="https://sbgitdept.github.io/m5-bus-controller/" class="text-blue-400 underline">HTTPS</a> 開啟（Web Bluetooth）</p>
+    </div>
+
+    <div id="panelWifi" class="hidden">
+      <div class="mb-3 flex items-center justify-between">
+        <span class="text-sm font-medium text-slate-300">WiFi 狀態</span>
+        <div class="flex items-center gap-2 text-sm text-slate-500">
+          <span id="wifiDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
+          <span id="wifiLabel">未連線</span>
+        </div>
+      </div>
+      <label class="mb-1 block text-xs text-slate-400" for="wifiHost">M5 IP 或主機名</label>
+      <input id="wifiHost" type="text" placeholder="m5-bus.local 或 192.168.x.x"
+        class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono text-white outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500" />
+      <button id="btnWifiConnect"
+        class="w-full rounded-xl bg-orange-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50">
+        🟠 連線 M5 (WiFi)
+      </button>
+      <p class="mt-2 text-xs text-slate-500">手機與 M5 須連同一 WiFi。M5 連網後可用 <code class="text-slate-400">m5-bus.local</code> 或螢幕旁路由器顯示的 IP。</p>
+      <p class="mt-1 text-xs text-amber-500/90">若從 GitHub Pages 開啟，瀏覽器可能詢問「允許存取本地網絡」—請按允許。</p>
+    </div>
   </section>
 
   <!-- Route Config -->
@@ -138,6 +170,8 @@
     const DEFAULT_STOP_ID_A = '68C988CE5394BAE7';
     const DEFAULT_STOP_ID_B = 'B0D79D5CE512B9EC';
     const DB_KEY = 'm5-bus-db';
+    const WIFI_HOST_KEY = 'm5-wifi-host';
+    const TRANSPORT_KEY = 'm5-transport';
     const DB_VERSION = 1;
     const DB_HISTORY_MAX = 12;
 
@@ -228,6 +262,9 @@
     let bleDevice = null;
     let bleChar = null;
     let autoSyncTimer = null;
+    let transportMode = localStorage.getItem(TRANSPORT_KEY) || 'ble';
+    let wifiConnected = false;
+    let wifiHost = localStorage.getItem(WIFI_HOST_KEY) || '';
     let kmbRoutes = [];
     let kmbRouteNumbers = [];
     let kmbGeneratedAt = '';
@@ -245,6 +282,25 @@
       while (el.children.length > 20) el.removeChild(el.lastChild);
     }
 
+    function normalizeWifiHost(host) {
+      return host.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    }
+
+    function wifiApiUrl(path) {
+      return `http://${normalizeWifiHost(wifiHost)}${path}`;
+    }
+
+    function isTransportConnected() {
+      if (transportMode === 'wifi') return wifiConnected;
+      return !!bleChar;
+    }
+
+    function updateSendControls() {
+      const connected = isTransportConnected();
+      $('btnSend').disabled = !connected;
+      $('autoSync').disabled = !connected;
+    }
+
     function setBleUi(connected) {
       const dot = $('bleDot');
       const label = $('bleLabel');
@@ -253,15 +309,102 @@
         dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-emerald-400';
         label.textContent = '已連線';
         label.className = 'text-emerald-400';
-        btn.textContent = '🔴 中斷連線';
+        btn.textContent = '🔴 中斷 BLE';
       } else {
         dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-slate-600';
         label.textContent = '未連線';
         label.className = 'text-slate-500';
         btn.textContent = '🔵 連線 M5 匙扣 (BLE)';
       }
-      $('btnSend').disabled = !connected;
-      $('autoSync').disabled = !connected;
+      updateSendControls();
+    }
+
+    function setWifiUi(connected, detail = '') {
+      const dot = $('wifiDot');
+      const label = $('wifiLabel');
+      const btn = $('btnWifiConnect');
+      if (connected) {
+        dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-orange-400';
+        label.textContent = detail || '已連線';
+        label.className = 'text-orange-400';
+        btn.textContent = '🔴 中斷 WiFi';
+      } else {
+        dot.className = 'status-dot h-2.5 w-2.5 rounded-full bg-slate-600';
+        label.textContent = '未連線';
+        label.className = 'text-slate-500';
+        btn.textContent = '🟠 連線 M5 (WiFi)';
+      }
+      updateSendControls();
+    }
+
+    function setTransportMode(mode) {
+      transportMode = mode;
+      localStorage.setItem(TRANSPORT_KEY, mode);
+      const bleActive = mode === 'ble';
+      $('panelBle').classList.toggle('hidden', !bleActive);
+      $('panelWifi').classList.toggle('hidden', bleActive);
+      $('modeBle').className = 'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ' +
+        (bleActive ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white');
+      $('modeWifi').className = 'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ' +
+        (!bleActive ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white');
+      updateSendControls();
+    }
+
+    async function fetchWithTimeout(url, options = {}, ms = 8000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ms);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function connectWifi() {
+      const host = normalizeWifiHost($('wifiHost').value);
+      if (!host) throw new Error('請輸入 M5 IP 或 m5-bus.local');
+      wifiHost = host;
+      localStorage.setItem(WIFI_HOST_KEY, host);
+      log(`連接 http://${host} …`);
+      const res = await fetchWithTimeout(wifiApiUrl('/api/status'));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const status = await res.json();
+      if (!status.wifi) throw new Error('M5 尚未連上 WiFi');
+      wifiConnected = true;
+      setWifiUi(true, status.ip || host);
+      log(`WiFi 已連線 M5 @ ${status.ip || host}`, 'ok');
+      if (status.busA?.route) {
+        log(`M5 現設定：${status.busA.route} / ${status.busB?.route || '-'}`, 'info');
+      }
+    }
+
+    function disconnectWifi() {
+      wifiConnected = false;
+      setWifiUi(false);
+      stopAutoSync();
+      $('autoSync').checked = false;
+      log('WiFi 已中斷', 'warn');
+    }
+
+    async function sendPayloadToM5(payload) {
+      if (transportMode === 'wifi') {
+        if (!wifiConnected) throw new Error('請先連接 WiFi');
+        const res = await fetchWithTimeout(wifiApiUrl('/api/config'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: payload,
+        });
+        if (!res.ok) {
+          const err = await res.text().catch(() => '');
+          throw new Error(`HTTP ${res.status}${err ? ` — ${err}` : ''}`);
+        }
+        const json = await res.json().catch(() => ({}));
+        if (json.ok === false) throw new Error(json.error || 'M5 拒絕設定');
+        return;
+      }
+      if (!bleChar) throw new Error('請先連接 BLE');
+      const encoder = new TextEncoder();
+      await bleChar.writeValue(encoder.encode(payload));
     }
 
     function sortRouteNo(a, b) {
@@ -562,7 +705,9 @@
       if (!variant) throw new Error('請選擇左欄方向 / 服務班次');
       if (!stopA) throw new Error('請選擇左欄車站');
       if (!stopB) throw new Error('請選擇右欄車站');
-      if (!bleChar) throw new Error('請先連接 BLE');
+      if (!isTransportConnected()) {
+        throw new Error(transportMode === 'wifi' ? '請先連接 WiFi' : '請先連接 BLE');
+      }
 
       const svcA = getServiceType();
       const boundA = variant.bound || 'O';
@@ -575,8 +720,7 @@
       log(`設定右欄 ${routeB} · ${stopLabelB} · 服務${svcB}`);
       const payload = buildPayload(routeA, stopA, svcA, boundA, routeB, stopB, svcB, boundB);
 
-      const encoder = new TextEncoder();
-      await bleChar.writeValue(encoder.encode(payload));
+      await sendPayloadToM5(payload);
 
       const db = loadDb();
       db.busA = snapshotBus('A');
@@ -711,10 +855,27 @@
         await connectBle();
       } catch (e) {
         if (e.name !== 'NotFoundError') {
-          log(`連線失敗：${e.message}`, 'err');
+          log(`BLE 連線失敗：${e.message}`, 'err');
         }
       }
     });
+
+    $('btnWifiConnect').addEventListener('click', async () => {
+      try {
+        if (wifiConnected) {
+          disconnectWifi();
+          return;
+        }
+        await connectWifi();
+      } catch (e) {
+        const msg = e.name === 'AbortError' ? '連線逾時' : e.message;
+        log(`WiFi 連線失敗：${msg}`, 'err');
+        disconnectWifi();
+      }
+    });
+
+    $('modeBle').addEventListener('click', () => setTransportMode('ble'));
+    $('modeWifi').addEventListener('click', () => setTransportMode('wifi'));
 
     $('btnSend').addEventListener('click', async () => {
       try {
@@ -726,9 +887,9 @@
 
     $('autoSync').addEventListener('change', (e) => {
       if (e.target.checked) {
-        if (!bleChar) {
+        if (!isTransportConnected()) {
           e.target.checked = false;
-          log('請先連接 BLE', 'warn');
+          log(transportMode === 'wifi' ? '請先連接 WiFi' : '請先連接 BLE', 'warn');
           return;
         }
         startAutoSync();
@@ -745,11 +906,14 @@
     });
 
     setBleUi(false);
+    setWifiUi(false);
+    if (wifiHost) $('wifiHost').value = wifiHost;
+    setTransportMode(transportMode);
 
     if (!window.isSecureContext) {
-      log('手機藍牙需要 HTTPS： https://sbgitdept.github.io/m5-bus-controller/', 'warn');
+      log('BLE 需要 HTTPS： https://sbgitdept.github.io/m5-bus-controller/', 'warn');
     } else if (!navigator.bluetooth) {
-      log('此瀏覽器不支援 Web Bluetooth', 'warn');
+      log('此瀏覽器不支援 Web Bluetooth（可用 WiFi 模式）', 'warn');
     }
 
     (async () => {
