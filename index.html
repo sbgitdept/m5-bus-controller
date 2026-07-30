@@ -117,8 +117,12 @@
     <p id="stopMetaB" class="mb-4 font-mono text-xs text-slate-500"></p>
 
     <button id="btnSend"
-      class="w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
+      class="mb-2 w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
       發送完整設定到 M5
+    </button>
+    <button id="btnSendSettings" type="button"
+      class="w-full rounded-xl border border-emerald-600/40 bg-emerald-950 px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50">
+      僅發送裝置設定（亮度／逾時／語言）
     </button>
   </section>
 
@@ -167,6 +171,19 @@
       </button>
     </div>
     <p class="mt-2 text-xs text-slate-500">設定經 <code class="text-slate-400">m5bus/&lt;ID&gt;/config</code>（retained JSON）· 遠端指令經 <code class="text-slate-400">/cmd</code>（非 retained）</p>
+    <details class="mt-3 rounded-lg border border-surface-border bg-slate-900/60 p-3 text-xs text-slate-500">
+      <summary class="cursor-pointer font-medium text-slate-400">MQTT Payload 參考</summary>
+      <p class="mt-2"><span class="text-slate-400">config</span>（retained）：</p>
+      <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-emerald-400/90">{
+  "v": 2,
+  "busA": { "route", "stop", "svc", "bound", "name" },
+  "busB": { "route", "stop", "svc", "bound", "name" },
+  "settings": { "bright": 0-3, "timeout": 0-3, "english": bool }
+}</pre>
+      <p class="mt-2"><span class="text-slate-400">cmd</span>（非 retained）：</p>
+      <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off", "seq": 123 }</pre>
+      <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>busA</code>/<code>busB</code>、<code>settings</code>、<code>last_action</code></p>
+    </details>
   </section>
 
   <!-- Auto Sync -->
@@ -306,6 +323,7 @@
     let lastStatusMs = 0;
     let lastM5Status = null;
     let pendingM5Ack = null;
+    let pendingActionAck = null;
     function routesMatchStatus(meta, msg) {
       if (!msg?.busA || !msg?.busB) return false;
       const stopA = msg.busA.stop || msg.busA.stopId || '';
@@ -331,6 +349,35 @@
         pendingM5Ack.resolve(msg);
         pendingM5Ack = null;
       }
+    }
+
+    function checkPendingActionAck(msg) {
+      if (!pendingActionAck || !msg?.last_action) return;
+      if (msg.last_action === pendingActionAck.action &&
+          msg.last_action_seq === pendingActionAck.seq) {
+        pendingActionAck.resolve(msg);
+        pendingActionAck = null;
+      }
+    }
+
+    function waitForActionAck(action, seq, timeoutMs = 15000) {
+      if (lastM5Status?.last_action === action && lastM5Status?.last_action_seq === seq) {
+        return Promise.resolve(lastM5Status);
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (pendingActionAck) pendingActionAck = null;
+          reject(new Error(`M5 未確認指令 ${action}`));
+        }, timeoutMs);
+        pendingActionAck = {
+          action,
+          seq,
+          resolve: (msg) => {
+            clearTimeout(timer);
+            resolve(msg);
+          },
+        };
+      });
     }
 
     function waitForM5Ack(meta, timeoutMs = 20000) {
@@ -399,11 +446,12 @@
 
     function buildAckMeta() {
       const settings = getSettingsFromUi();
+      const live = lastM5Status || {};
       return {
-        routeA: getRoute(),
-        stopA: getStopId(),
-        routeB: getRouteB() || getRoute(),
-        stopB: getStopIdB(),
+        routeA: getRoute() || live.busA?.route || '',
+        stopA: getStopId() || live.busA?.stop || live.busA?.stopId || '',
+        routeB: getRouteB() || getRoute() || live.busB?.route || '',
+        stopB: getStopIdB() || live.busB?.stop || live.busB?.stopId || '',
         bright: settings.bright,
         timeout: settings.timeout,
         english: settings.english,
@@ -417,6 +465,7 @@
     function updateSendControls() {
       const connected = isTransportConnected();
       $('btnSend').disabled = !connected;
+      $('btnSendSettings').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
       $('btnReboot').disabled = !connected;
@@ -528,10 +577,12 @@
           lastStatusMs = Date.now();
           lastM5Status = msg;
           checkPendingM5Ack(msg);
+          checkPendingActionAck(msg);
           applyM5StatusToUi(msg);
           const detail = msg.ip ? `${msg.device || id} · ${msg.ip}` : (msg.device || id);
           const routeHint = msg.busA?.route ? ` · ${msg.busA.route}/${msg.busB?.route || '?'}` : '';
-          setLiveUi(!!msg.live || !!msg.mqtt, `${detail}${routeHint}`);
+          const actionHint = msg.last_action ? ` · ${msg.last_action}` : '';
+          setLiveUi(!!msg.live || !!msg.mqtt, `${detail}${routeHint}${actionHint}`);
         } catch {
           lastStatusMs = Date.now();
           setLiveUi(true, id);
@@ -564,7 +615,8 @@
     async function sendCommand(action, label) {
       if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
       const id = getDeviceId();
-      const payload = JSON.stringify({ action, seq: Date.now() });
+      const seq = Date.now();
+      const payload = JSON.stringify({ action, seq });
       await new Promise((resolve, reject) => {
         mqttClient.publish(topicCmd(id), payload, { qos: 0, retain: false }, (err) => {
           if (err) reject(err);
@@ -572,6 +624,12 @@
         });
       });
       log(`→ MQTT cmd ${payload} (${label})`, 'info');
+      try {
+        await waitForActionAck(action, seq);
+        log(`M5 已確認：${label}`, 'ok');
+      } catch (e) {
+        log(e.message, 'warn');
+      }
     }
 
     // --- placeholders removed: BLE / LAN WiFi ---
@@ -912,6 +970,13 @@
       });
     }
 
+    function buildSettingsOnlyJson() {
+      return JSON.stringify({
+        v: 2,
+        settings: getSettingsFromUi(),
+      });
+    }
+
     /** @deprecated Legacy DUALBUS3 string — kept for reference */
     function buildPayload(routeA, stopA, svcA, boundA, dirA, routeB, stopB, svcB, boundB, dirB) {
       return `DUALBUS3|${routeA}|${stopA}|${svcA}|${boundA}|${dirA}|${routeB}|${stopB}|${svcB}|${boundB}|${dirB}`;
@@ -955,6 +1020,24 @@
       log('已儲存設定至本機 DB', 'ok');
 
       $('lastPayload').textContent = `→ Cloud Config JSON (${payload.length} bytes)`;
+      $('lastPayload').classList.remove('hidden');
+      return payload;
+    }
+
+    async function sendSettingsOnly() {
+      if (!isTransportConnected()) {
+        throw new Error('請先連線雲端 Config');
+      }
+      const settings = getSettingsFromUi();
+      log(`裝置設定：亮度 ${['25%','50%','75%','100%'][settings.bright] || settings.bright} · 逾時 ${['15s','30s','60s','永不'][settings.timeout] || settings.timeout} · ${settings.english ? 'EN' : '中文'}`);
+      const payload = buildSettingsOnlyJson();
+      const meta = buildAckMeta();
+      await sendPayloadToM5(payload, meta);
+      const db = loadDb();
+      db.config = { ...db.config, ...settings };
+      saveDb(db);
+      log('裝置設定已儲存至本機 DB', 'ok');
+      $('lastPayload').textContent = `→ Settings-only JSON (${payload.length} bytes)`;
       $('lastPayload').classList.remove('hidden');
       return payload;
     }
@@ -1050,6 +1133,14 @@
         await sendToM5();
       } catch (e) {
         log(`發送失敗：${e.message}`, 'err');
+      }
+    });
+
+    $('btnSendSettings').addEventListener('click', async () => {
+      try {
+        await sendSettingsOnly();
+      } catch (e) {
+        log(`設定發送失敗：${e.message}`, 'err');
       }
     });
 
