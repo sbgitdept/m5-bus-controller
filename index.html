@@ -48,7 +48,7 @@
     <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">架構</h2>
     <ul class="space-y-1.5 text-xs leading-relaxed text-slate-400">
       <li><span class="font-medium text-emerald-400">① 雲端 Config</span> — 本頁只寫路線／Stop ID／服務／方向到雲端；M5 開機／週期／WiFi 恢復時輪詢。</li>
-      <li><span class="font-medium text-sky-400">② KMB ETA</span> — M5 直接打 <code class="text-slate-300">data.etabus.gov.hk</code>，唔經後端轉 ETA。</li>
+      <li><span class="font-medium text-sky-400">② 雙營運商 ETA</span> — M5 直連 <code class="text-slate-300">九巴 data.etabus.gov.hk</code> / <code class="text-slate-300">城巴 rt.data.gov.hk</code>。</li>
       <li><span class="font-medium text-amber-400">③ NVS 離線</span> — M5 收到新設定即寫入 <code class="text-slate-300">db_json</code>；雲端／WiFi 斷線時用最後一次本地設定繼續顯示。</li>
     </ul>
   </section>
@@ -112,15 +112,22 @@
       <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">左欄 (方向 A)</h2>
       <button id="btnRefreshRoutes" type="button"
         class="shrink-0 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">
-        🔄 同步九巴
+        🔄 同步路線
       </button>
     </div>
-    <p id="kmbSyncStatus" class="mb-3 text-xs text-slate-500">正在載入九巴路線資料…</p>
+    <p id="kmbSyncStatus" class="mb-3 text-xs text-slate-500">正在載入路線資料…</p>
+
+    <label class="mb-1 block text-xs text-slate-400" for="coSelectA">巴士公司</label>
+    <select id="coSelectA"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+      <option value="KMB">九巴 KMB</option>
+      <option value="CTB">城巴 CTB</option>
+    </select>
 
     <label class="mb-1 block text-xs text-slate-400" for="routeInput">路線</label>
-    <input id="routeInput" list="routeList" type="text" placeholder="搜尋路線，例：76K"
+    <input id="routeInput" list="routeListA" type="text" placeholder="搜尋路線，例：76K / 720"
       class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
-    <datalist id="routeList"></datalist>
+    <datalist id="routeListA"></datalist>
 
     <label class="mb-1 block text-xs text-slate-400" for="variantSelect">方向 / 服務班次</label>
     <select id="variantSelect" disabled
@@ -136,9 +143,16 @@
     <p id="stopMeta" class="mb-4 font-mono text-xs text-slate-500"></p>
 
     <h3 class="mb-2 text-sm font-semibold text-slate-400">右欄 (方向 B)</h3>
+    <label class="mb-1 block text-xs text-slate-400" for="coSelectB">巴士公司</label>
+    <select id="coSelectB"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+      <option value="KMB">九巴 KMB</option>
+      <option value="CTB">城巴 CTB</option>
+    </select>
     <label class="mb-1 block text-xs text-slate-400" for="routeInputB">路線</label>
-    <input id="routeInputB" list="routeList" type="text" placeholder="例：76K"
+    <input id="routeInputB" list="routeListB" type="text" placeholder="例：76K / 720"
       class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+    <datalist id="routeListB"></datalist>
 
     <label class="mb-1 block text-xs text-slate-400" for="variantSelectB">方向 / 服務班次</label>
     <select id="variantSelectB" disabled
@@ -213,8 +227,8 @@
       <p class="mt-2"><span class="text-slate-400">config</span>（retained）：</p>
       <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-emerald-400/90">{
   "v": 2,
-  "busA": { "route", "stop", "svc", "bound", "name" },
-  "busB": { "route", "stop", "svc", "bound", "name" },
+  "busA": { "co": "KMB"|"CTB", "route", "stop", "svc", "bound", "name" },
+  "busB": { "co": "KMB"|"CTB", "route", "stop", "svc", "bound", "name" },
   "settings": { "bright": 0-3, "timeout": 0-3, "english": bool,
     "wifi": { "preset": 0-2, "ssid": "...", "password": "..." } }
 }</pre>
@@ -255,6 +269,8 @@
     const BLE_CHAR_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
     const KMB_BASE = 'https://data.etabus.gov.hk/v1/transport/kmb';
     const KMB_ETA_BASE = `${KMB_BASE}/eta`;
+    const CTB_BASE = 'https://rt.data.gov.hk/v2/transport/citybus';
+    const CTB_ETA_BASE = `${CTB_BASE}/eta/CTB`;
     const AUTO_SYNC_MS = 30_000;
     const DEFAULT_ROUTE = '76K';
     const DEFAULT_STOP_ID_A = '68C988CE5394BAE7';
@@ -274,6 +290,7 @@
         v: DB_VERSION,
         config: { autoSync: false, bright: 1, timeout: 1, english: false, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '' },
         busA: {
+          co: 'KMB',
           route: DEFAULT_ROUTE,
           stopId: DEFAULT_STOP_ID_A,
           bound: 'O',
@@ -282,6 +299,7 @@
           variantLabel: '',
         },
         busB: {
+          co: 'KMB',
           route: DEFAULT_ROUTE,
           stopId: DEFAULT_STOP_ID_B,
           bound: 'I',
@@ -318,6 +336,7 @@
       const variant = side === 'B' ? getSelectedVariantB() : getSelectedVariant();
       const stopSelect = $('stopSelect' + suffix);
       return {
+        co: getCo(side === 'B' ? 'B' : 'A'),
         route: side === 'B' ? getRouteB() : getRoute(),
         stopId: stopSelect.value.trim(),
         bound: variant?.bound || 'O',
@@ -369,8 +388,10 @@
       const stopA = msg.busA.stop || msg.busA.stopId || '';
       const stopB = msg.busB.stop || msg.busB.stopId || '';
       return msg.busA.route === meta.routeA &&
+        (msg.busA.co || 'KMB') === (meta.coA || 'KMB') &&
         stopA === meta.stopA &&
         msg.busB.route === meta.routeB &&
+        (msg.busB.co || 'KMB') === (meta.coB || 'KMB') &&
         stopB === meta.stopB;
     }
 
@@ -440,7 +461,11 @@
     }
     let kmbRoutes = [];
     let kmbRouteNumbers = [];
+    let ctbRoutes = [];
+    let ctbRouteNumbers = [];
+    let ctbRouteStops = null;
     let kmbGeneratedAt = '';
+    let ctbGeneratedAt = '';
     let stopLoadToken = 0;
 
     function log(msg, type = 'info') {
@@ -567,6 +592,10 @@
       } else if (msg?.wifi_ssid) {
         applyWifiToUi({ ssid: msg.wifi_ssid });
       }
+      if (msg?.busA?.co) $('coSelectA').value = msg.busA.co;
+      if (msg?.busB?.co) $('coSelectB').value = msg.busB.co;
+      populateRouteDatalist('');
+      populateRouteDatalist('B');
       updateBatteryBadge(msg);
       updateWifiStatusLine(msg);
     }
@@ -575,6 +604,8 @@
       const settings = getSettingsFromUi();
       const live = lastM5Status || {};
       return {
+        coA: getCo('A'),
+        coB: getCo('B'),
         routeA: getRoute() || live.busA?.route || '',
         stopA: getStopId() || live.busA?.stop || live.busA?.stopId || '',
         routeB: getRouteB() || getRoute() || live.busB?.route || '',
@@ -807,6 +838,24 @@
       return destTc;
     }
 
+    function getCo(suffix = '') {
+      const id = suffix === 'B' ? 'coSelectB' : 'coSelectA';
+      const val = $(id).value;
+      return val === 'CTB' ? 'CTB' : 'KMB';
+    }
+
+    function getRouteStore(co) {
+      return co === 'CTB' ? ctbRoutes : kmbRoutes;
+    }
+
+    function getRouteNumbers(co) {
+      return co === 'CTB' ? ctbRouteNumbers : kmbRouteNumbers;
+    }
+
+    function operatorLabel(co) {
+      return co === 'CTB' ? '城巴' : '九巴';
+    }
+
     function getRoute() {
       return $('routeInput').value.trim().toUpperCase();
     }
@@ -814,7 +863,7 @@
     function getSelectedVariant() {
       const idx = $('variantSelect').value;
       if (idx === '') return null;
-      return getVariants(getRoute())[Number(idx)] || null;
+      return getVariants(getRoute(), '')[Number(idx)] || null;
     }
 
     function getStopId() {
@@ -833,7 +882,7 @@
     function getSelectedVariantB() {
       const idx = $('variantSelectB').value;
       if (idx === '') return null;
-      return getVariants(getRouteB())[Number(idx)] || null;
+      return getVariants(getRouteB(), 'B')[Number(idx)] || null;
     }
 
     function getStopIdB() {
@@ -845,8 +894,9 @@
       return variant ? variant.service_type : '1';
     }
 
-    function getVariants(route) {
-      return kmbRoutes.filter((item) => item.route === route);
+    function getVariants(route, suffix = '') {
+      const co = getCo(suffix);
+      return getRouteStore(co).filter((item) => item.route === route);
     }
 
     function setKmbStatus(text, type = 'info') {
@@ -860,10 +910,11 @@
       }[type] || 'text-slate-500');
     }
 
-    function populateRouteDatalist() {
-      const list = $('routeList');
+    function populateRouteDatalist(suffix = '') {
+      const co = getCo(suffix);
+      const list = $(suffix === 'B' ? 'routeListB' : 'routeListA');
       list.innerHTML = '';
-      for (const route of kmbRouteNumbers) {
+      for (const route of getRouteNumbers(co)) {
         const opt = document.createElement('option');
         opt.value = route;
         list.appendChild(opt);
@@ -872,7 +923,7 @@
 
     function populateVariants(route, preferredBound = 'O', preferredService = '1', suffix = '') {
       const select = $('variantSelect' + suffix);
-      const variants = getVariants(route);
+      const variants = getVariants(route, suffix);
       select.innerHTML = '';
 
       if (variants.length === 0) {
@@ -904,11 +955,25 @@
       $('stopMeta' + suffix).textContent = '';
     }
 
-    async function fetchStopName(stopId) {
+    async function fetchStopName(stopId, co = 'KMB') {
+      if (co === 'CTB') {
+        const res = await fetch(`${CTB_BASE}/stop/${encodeURIComponent(stopId)}`);
+        if (!res.ok) return stopId;
+        const json = await res.json();
+        return json.data?.name_tc || json.data?.name_en || stopId;
+      }
       const res = await fetch(`${KMB_BASE}/stop/${encodeURIComponent(stopId)}`);
       if (!res.ok) return stopId;
       const json = await res.json();
       return json.data?.name_tc || json.data?.name_en || stopId;
+    }
+
+    async function ensureCtbRouteStops() {
+      if (ctbRouteStops) return;
+      const res = await fetch(`${CTB_BASE}/route-stop/ctb`);
+      if (!res.ok) throw new Error(`城巴車站列表 HTTP ${res.status}`);
+      const json = await res.json();
+      ctbRouteStops = Array.isArray(json.data) ? json.data : [];
     }
 
     async function loadStopsForVariant(variant, preferredStopId = '', suffix = '') {
@@ -917,26 +982,37 @@
         return;
       }
 
+      const co = getCo(suffix);
       const token = ++stopLoadToken;
       const select = $('stopSelect' + suffix);
       select.disabled = true;
       select.innerHTML = '<option value="">載入車站中…</option>';
       $('stopMeta' + suffix).textContent = '';
 
-      const path = boundToPath(variant.bound);
-      const url = `${KMB_BASE}/route-stop/${encodeURIComponent(variant.route)}/${path}/${variant.service_type}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`車站列表 HTTP ${res.status}`);
-
-      const json = await res.json();
-      const rows = Array.isArray(json.data) ? json.data.slice() : [];
+      let rows = [];
+      if (co === 'CTB') {
+        await ensureCtbRouteStops();
+        rows = ctbRouteStops.filter((row) =>
+          row.route === variant.route &&
+          row.bound === variant.bound &&
+          String(row.service_type) === String(variant.service_type)
+        );
+      } else {
+        const path = boundToPath(variant.bound);
+        const url = `${KMB_BASE}/route-stop/${encodeURIComponent(variant.route)}/${path}/${variant.service_type}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`車站列表 HTTP ${res.status}`);
+        const json = await res.json();
+        rows = Array.isArray(json.data) ? json.data.slice() : [];
+      }
       rows.sort((a, b) => Number(a.seq) - Number(b.seq));
 
       if (token !== stopLoadToken) return;
 
       const names = await Promise.all(rows.map(async (row) => {
-        const name = await fetchStopName(row.stop);
-        return { ...row, name_tc: name };
+        const stopId = row.stop || row.stop_id || row.stopId;
+        const name = await fetchStopName(stopId, co);
+        return { ...row, stop: stopId, name_tc: name };
       }));
 
       if (token !== stopLoadToken) return;
@@ -970,7 +1046,7 @@
         return;
       }
       const opt = $('stopSelect' + suffix).selectedOptions[0];
-      meta.textContent = `Stop ID: ${stopId} · ${variant.route} 服務${variant.service_type}`;
+      meta.textContent = `Stop ID: ${stopId} · ${getCo(suffix)} ${variant.route} 服務${variant.service_type}`;
       if (opt) meta.textContent += ` · ${opt.textContent}`;
     }
 
@@ -986,8 +1062,10 @@
         return;
       }
 
-      if (!kmbRouteNumbers.includes(normalized)) {
-        if (!suffix) setKmbStatus(`路線 ${normalized} 不在九巴資料庫`, 'warn');
+      if (!getRouteNumbers(getCo(suffix)).includes(normalized)) {
+        if (!suffix) {
+          setKmbStatus(`路線 ${normalized} 不在${operatorLabel(getCo(suffix))}資料庫`, 'warn');
+        }
         $('variantSelect' + suffix).disabled = true;
         $('variantSelect' + suffix).innerHTML = '<option value="">找不到此路線</option>';
         resetStops(suffix);
@@ -1004,14 +1082,48 @@
       const variant = suffix ? getSelectedVariantB() : getSelectedVariant();
       await loadStopsForVariant(variant, options.stopId || '', suffix);
       if (!suffix) {
-        setKmbStatus(`已同步 ${normalized} · 九巴資料 ${kmbGeneratedAt || ''}`, 'ok');
+        setKmbStatus(`已同步 ${normalized} · ${operatorLabel(getCo(suffix))} ${getCo(suffix) === 'CTB' ? ctbGeneratedAt : kmbGeneratedAt}`, 'ok');
+      }
+    }
+
+    async function loadCtbRoutes() {
+      try {
+        const res = await fetch(`${CTB_BASE}/route/ctb`);
+        if (!res.ok) throw new Error(`城巴路線 HTTP ${res.status}`);
+        const json = await res.json();
+        ctbRoutes = Array.isArray(json.data) ? json.data : [];
+        ctbRouteNumbers = [...new Set(ctbRoutes.map((item) => item.route))].sort(sortRouteNo);
+        ctbGeneratedAt = json.generated_timestamp
+          ? new Date(json.generated_timestamp).toLocaleString('zh-HK', { hour12: false })
+          : '';
+        ctbRouteStops = null;
+        log(`城巴路線已同步（${ctbRouteNumbers.length} 條）`, 'ok');
+        return true;
+      } catch (e) {
+        log(`城巴路線同步失敗：${e.message}`, 'err');
+        return false;
+      }
+    }
+
+    async function loadAllRoutes() {
+      setKmbStatus('正在載入九巴／城巴路線…', 'info');
+      $('btnRefreshRoutes').disabled = true;
+      try {
+        const [kmbOk, ctbOk] = await Promise.all([loadKmbRoutes(), loadCtbRoutes()]);
+        populateRouteDatalist('');
+        populateRouteDatalist('B');
+        if (kmbOk || ctbOk) {
+          setKmbStatus(`九巴 ${kmbRouteNumbers.length} 條 · 城巴 ${ctbRouteNumbers.length} 條`, 'ok');
+        } else {
+          setKmbStatus('路線同步失敗', 'err');
+        }
+        return kmbOk || ctbOk;
+      } finally {
+        $('btnRefreshRoutes').disabled = false;
       }
     }
 
     async function loadKmbRoutes() {
-      setKmbStatus('正在載入九巴路線資料…', 'info');
-      $('btnRefreshRoutes').disabled = true;
-
       try {
         const res = await fetch(`${KMB_BASE}/route`);
         if (!res.ok) throw new Error(`路線列表 HTTP ${res.status}`);
@@ -1021,16 +1133,11 @@
         kmbGeneratedAt = json.generated_timestamp
           ? new Date(json.generated_timestamp).toLocaleString('zh-HK', { hour12: false })
           : '';
-        populateRouteDatalist();
-        setKmbStatus(`已載入 ${kmbRouteNumbers.length} 條路線 · ${kmbGeneratedAt}`, 'ok');
         log(`九巴路線已同步（${kmbRouteNumbers.length} 條）`, 'ok');
         return true;
       } catch (e) {
-        setKmbStatus(`九巴同步失敗：${e.message}`, 'err');
         log(`九巴路線同步失敗：${e.message}`, 'err');
         return false;
-      } finally {
-        $('btnRefreshRoutes').disabled = false;
       }
     }
 
@@ -1083,6 +1190,7 @@
       return JSON.stringify({
         v: 2,
         busA: {
+          co: getCo('A'),
           route: getRoute(),
           stop: getStopId(),
           svc: getServiceType(),
@@ -1090,6 +1198,7 @@
           name: compactDirLabel(variant?.dest_tc || ''),
         },
         busB: {
+          co: getCo('B'),
           route: getRouteB() || getRoute(),
           stop: getStopIdB(),
           svc: getServiceTypeB(),
@@ -1278,14 +1387,27 @@
     });
 
     $('btnRefreshRoutes').addEventListener('click', async () => {
-      const ok = await loadKmbRoutes();
-      if (ok) {
+      await loadAllRoutes();
+      try {
         await applyRouteSelection(getRoute() || DEFAULT_ROUTE, {
           bound: getSelectedVariant()?.bound || 'O',
           serviceType: getServiceType(),
           stopId: getStopId(),
         });
+      } catch (e) {
+        log(`路線載入失敗：${e.message}`, 'err');
       }
+    });
+
+    $('coSelectA').addEventListener('change', () => {
+      populateRouteDatalist('');
+      applyRouteSelection(getRoute()).catch((e) => log(`左欄路線載入失敗：${e.message}`, 'err'));
+      schedulePersistDb();
+    });
+    $('coSelectB').addEventListener('change', () => {
+      populateRouteDatalist('B');
+      applyRouteSelection(getRouteB(), {}, 'B').catch((e) => log(`右欄路線載入失敗：${e.message}`, 'err'));
+      schedulePersistDb();
     });
 
     $('btnCloudConnect').addEventListener('click', () => {
@@ -1390,7 +1512,7 @@
     const savedId = localStorage.getItem(DEVICE_ID_KEY) || '';
     if (savedId) $('deviceId').value = savedId;
     updateSendControls();
-    log('架構：雲端 Config 輪詢 · M5 直連 KMB ETA · NVS db_json 離線保護', 'info');
+    log('架構：雲端 Config · M5 直連九巴／城巴 ETA · NVS db_json 離線保護', 'info');
     log('請在 M5 選單 → 關於 查看 Device ID，再連線雲端 Config', 'info');
 
     (async () => {
@@ -1406,7 +1528,9 @@
         $('wifiSsidInput').value = db.config.wifiCustomSsid;
       }
       toggleWifiCustomFields();
-      const ok = await loadKmbRoutes();
+      if (db.busA?.co) $('coSelectA').value = db.busA.co;
+      if (db.busB?.co) $('coSelectB').value = db.busB.co;
+      const ok = await loadAllRoutes();
       if (ok) {
         await applyRouteSelection(db.busA.route || DEFAULT_ROUTE, {
           bound: db.busA.bound || 'O',
