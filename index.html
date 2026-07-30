@@ -173,7 +173,7 @@
     </button>
     <button id="btnSendSettings" type="button"
       class="w-full rounded-xl border border-emerald-600/40 bg-emerald-950 px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50">
-      僅發送裝置設定（亮度／逾時／語言）
+      僅發送裝置設定（亮度／逾時／語言／顯示）
     </button>
   </section>
 
@@ -201,9 +201,17 @@
 
     <label class="mb-1 block text-xs text-slate-400" for="languageSelect">語言</label>
     <select id="languageSelect"
-      class="mb-4 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
       <option value="0">中文</option>
       <option value="1">English</option>
+    </select>
+
+    <label class="mb-1 block text-xs text-slate-400" for="displayModeSelect">顯示模式／方向</label>
+    <select id="displayModeSelect"
+      class="mb-4 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+      <option value="0" selected>自動（IMU 感應）</option>
+      <option value="1">強制橫向（Horizontal）</option>
+      <option value="2">強制直向（Vertical）</option>
     </select>
 
     <h3 class="mb-2 text-sm font-semibold text-slate-400">遠端操作</h3>
@@ -230,8 +238,10 @@
   "busA": { "co": "KMB"|"CTB", "route", "stop", "svc", "bound", "name" },
   "busB": { "co": "KMB"|"CTB", "route", "stop", "svc", "bound", "name" },
   "settings": { "bright": 0-3, "timeout": 0-3, "english": bool,
+    "display_mode": 0|1|2,
     "wifi": { "preset": 0-2, "ssid": "...", "password": "..." } }
 }</pre>
+      <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=自動(IMU) · 1=強制橫向 · 2=強制直向</p>
       <p class="mt-2"><span class="text-slate-400">cmd</span>（非 retained）：</p>
       <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off", "seq": 123 }</pre>
       <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>wifi_info</code>、<code>busA</code>/<code>busB</code>、<code>settings</code></p>
@@ -288,7 +298,7 @@
     function defaultDb() {
       return {
         v: DB_VERSION,
-        config: { autoSync: false, bright: 1, timeout: 1, english: false, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '' },
+        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '' },
         busA: {
           co: 'KMB',
           route: DEFAULT_ROUTE,
@@ -401,7 +411,8 @@
       if (!s) return true;
       return s.bright === meta.bright &&
         s.timeout === meta.timeout &&
-        s.english === meta.english;
+        s.english === meta.english &&
+        (s.display_mode ?? 0) === (meta.displayMode ?? 0);
     }
 
     function checkPendingM5Ack(msg) {
@@ -565,11 +576,14 @@
         : 'mb-3 rounded-lg bg-amber-950/40 px-3 py-2 text-xs text-amber-300';
     }
 
+    const DISPLAY_MODE_LABELS = ['自動(IMU)', '強制橫向', '強制直向'];
+
     function getSettingsFromUi() {
       return {
         bright: Number($('brightSelect').value),
         timeout: Number($('timeoutSelect').value),
         english: $('languageSelect').value === '1',
+        display_mode: Number($('displayModeSelect').value),
       };
     }
 
@@ -579,6 +593,11 @@
       if (settings.timeout != null) $('timeoutSelect').value = String(settings.timeout);
       if (settings.english != null) {
         $('languageSelect').value = settings.english ? '1' : '0';
+      }
+      if (settings.display_mode != null) {
+        $('displayModeSelect').value = String(settings.display_mode);
+      } else if (settings.displayMode != null) {
+        $('displayModeSelect').value = String(settings.displayMode);
       }
     }
 
@@ -613,6 +632,7 @@
         bright: settings.bright,
         timeout: settings.timeout,
         english: settings.english,
+        displayMode: settings.display_mode,
       };
     }
 
@@ -1255,7 +1275,7 @@
       const settings = getSettingsFromUi();
       log(`設定左欄 ${routeA} → ${dirA || '—'} · ${stopLabelA}`);
       log(`設定右欄 ${routeB} → ${dirB || '—'} · ${stopLabelB}`);
-      log(`裝置：亮度 ${['25%','50%','75%','100%'][settings.bright] || settings.bright} · 逾時 ${['15s','30s','60s','永不'][settings.timeout] || settings.timeout} · ${settings.english ? 'EN' : '中文'}`);
+      log(`裝置：亮度 ${['25%','50%','75%','100%'][settings.bright] || settings.bright} · 逾時 ${['15s','30s','60s','永不'][settings.timeout] || settings.timeout} · ${settings.english ? 'EN' : '中文'} · ${DISPLAY_MODE_LABELS[settings.display_mode] || settings.display_mode}`);
 
       const payload = buildConfigJson();
       const meta = buildAckMeta();
@@ -1310,7 +1330,7 @@
         throw new Error('請先連線雲端 Config');
       }
       const settings = getSettingsFromUi();
-      log(`裝置設定：亮度 ${['25%','50%','75%','100%'][settings.bright] || settings.bright} · 逾時 ${['15s','30s','60s','永不'][settings.timeout] || settings.timeout} · ${settings.english ? 'EN' : '中文'}`);
+      log(`裝置設定：亮度 ${['25%','50%','75%','100%'][settings.bright] || settings.bright} · 逾時 ${['15s','30s','60s','永不'][settings.timeout] || settings.timeout} · ${settings.english ? 'EN' : '中文'} · ${DISPLAY_MODE_LABELS[settings.display_mode] || settings.display_mode}`);
       const payload = buildSettingsOnlyJson();
       const meta = buildAckMeta();
       await sendPayloadToM5(payload, meta);
@@ -1489,7 +1509,7 @@
       }
     });
 
-    ['brightSelect', 'timeoutSelect', 'languageSelect'].forEach((id) => {
+    ['brightSelect', 'timeoutSelect', 'languageSelect', 'displayModeSelect'].forEach((id) => {
       $(id).addEventListener('change', () => schedulePersistDb());
     });
 
