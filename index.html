@@ -32,17 +32,27 @@
   <!-- Header -->
   <header class="mb-6 text-center">
     <h1 class="text-2xl font-bold tracking-tight text-white">M5 Bus Controller</h1>
-    <p class="mt-1 text-sm text-slate-400">九巴 ETA → M5StickS3 匙扣</p>
+    <p class="mt-1 text-sm text-slate-400">雲端路線設定 · M5 直連九巴 ETA</p>
     <div id="liveBadge" class="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-500">
       <span id="liveDot" class="h-2 w-2 rounded-full bg-slate-600"></span>
       <span id="liveText">M5 Offline</span>
     </div>
   </header>
 
-  <!-- Cloud MQTT -->
+  <!-- Architecture -->
+  <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
+    <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">架構</h2>
+    <ul class="space-y-1.5 text-xs leading-relaxed text-slate-400">
+      <li><span class="font-medium text-emerald-400">① 雲端 Config</span> — 本頁只寫路線／Stop ID／服務／方向到雲端；M5 開機／週期／WiFi 恢復時輪詢。</li>
+      <li><span class="font-medium text-sky-400">② KMB ETA</span> — M5 直接打 <code class="text-slate-300">data.etabus.gov.hk</code>，唔經後端轉 ETA。</li>
+      <li><span class="font-medium text-amber-400">③ NVS 離線</span> — M5 收到新設定即寫入 <code class="text-slate-300">db_json</code>；雲端／WiFi 斷線時用最後一次本地設定繼續顯示。</li>
+    </ul>
+  </section>
+
+  <!-- Cloud config backend -->
   <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
     <div class="mb-3 flex items-center justify-between">
-      <span class="text-sm font-medium text-slate-300">Internet 雲端 (MQTT)</span>
+      <span class="text-sm font-medium text-slate-300">雲端 Config（MQTT）</span>
       <div class="flex items-center gap-2 text-sm text-slate-500">
         <span id="cloudDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
         <span id="cloudLabel">未連線</span>
@@ -53,10 +63,10 @@
       class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono uppercase text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500" />
     <button id="btnCloudConnect"
       class="mb-2 w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-emerald-500">
-      ☁ 連線雲端 Broker
+      ☁ 連線雲端 Config
     </button>
-    <p class="mt-2 text-xs text-slate-500">M5 連上 Internet WiFi 後會自動訂閱 <code class="text-slate-400">m5bus/&lt;DeviceID&gt;/config</code>。手機唔使近距離，有網絡即可遠端發送。</p>
-    <p class="mt-1 text-xs text-slate-500">Broker：<code class="text-slate-400">broker.hivemq.com</code>（WSS）· 頂部徽章顯示 M5 Live（status heartbeat）</p>
+    <p class="mt-2 text-xs text-slate-500">寫入 <code class="text-slate-400">m5bus/&lt;DeviceID&gt;/config</code>（retained）。M5 會訂閱並每約 60 秒輪詢；亦可放 JSON 到 Pages <code class="text-slate-400">devices/&lt;ID&gt;.json</code> 作次要 HTTP 輪詢。</p>
+    <p class="mt-1 text-xs text-slate-500">Broker：<code class="text-slate-400">broker.hivemq.com</code>（WSS）· 頂部徽章 = M5 Live status</p>
   </section>
 
   <!-- Route Config -->
@@ -368,7 +378,7 @@
         setCloudUi(true, 'HiveMQ');
         mqttClient.subscribe(topicStatus(id), { qos: 0 });
         startLiveWatchdog();
-        log('雲端 MQTT 已連線', 'ok');
+        log('雲端 Config 已連線', 'ok');
       });
 
       mqttClient.on('reconnect', () => log('雲端重連中…', 'warn'));
@@ -392,16 +402,51 @@
       });
     }
 
-    async function sendPayloadToM5(payload) {
-      if (!isTransportConnected()) throw new Error('請先連線雲端 MQTT');
+    function buildCloudConfigBody(dualbus, meta) {
+      return JSON.stringify({
+        v: 1,
+        dualbus,
+        ts: Date.now(),
+        busA: {
+          route: meta.routeA,
+          stop: meta.stopA,
+          stopId: meta.stopA,
+          svc: meta.svcA,
+          serviceType: meta.svcA,
+          bound: meta.boundA,
+        },
+        busB: {
+          route: meta.routeB,
+          stop: meta.stopB,
+          stopId: meta.stopB,
+          svc: meta.svcB,
+          serviceType: meta.svcB,
+          bound: meta.boundB,
+        },
+      });
+    }
+
+    async function sendPayloadToM5(payload, meta) {
+      if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
       const id = getDeviceId();
-      const body = JSON.stringify({ dualbus: payload, ts: Date.now() });
+      const body = buildCloudConfigBody(payload, meta);
       await new Promise((resolve, reject) => {
-        mqttClient.publish(topicConfig(id), body, { qos: 0 }, (err) => {
+        // retain=true → M5 boot / periodic poll gets last cloud config
+        mqttClient.publish(topicConfig(id), body, { qos: 0, retain: true }, (err) => {
           if (err) reject(err);
           else resolve();
         });
       });
+      try {
+        const blob = new Blob([body], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${id}.json`;
+        a.dataset.cloudExport = '1';
+        // Keep last export in memory for optional Pages devices/<id>.json upload
+        window.__lastCloudConfigJson = body;
+        window.__lastCloudConfigDeviceId = id;
+      } catch (_) { /* ignore */ }
     }
 
     // --- placeholders removed: BLE / LAN WiFi ---
@@ -715,7 +760,7 @@
       if (!stopA) throw new Error('請選擇左欄車站');
       if (!stopB) throw new Error('請選擇右欄車站');
       if (!isTransportConnected()) {
-        throw new Error('請先連線雲端 MQTT');
+        throw new Error('請先連線雲端 Config');
       }
 
       const svcA = getServiceType();
@@ -729,7 +774,9 @@
       log(`設定右欄 ${routeB} · ${stopLabelB} · 服務${svcB}`);
       const payload = buildPayload(routeA, stopA, svcA, boundA, routeB, stopB, svcB, boundB);
 
-      await sendPayloadToM5(payload);
+      await sendPayloadToM5(payload, {
+        routeA, stopA, svcA, boundA, routeB, stopB, svcB, boundB,
+      });
 
       const db = loadDb();
       db.busA = snapshotBus('A');
@@ -738,9 +785,9 @@
       saveDb(db);
       log('已儲存設定至本機 DB', 'ok');
 
-      $('lastPayload').textContent = `→ MQTT ${payload}`;
+      $('lastPayload').textContent = `→ Cloud Config ${payload}`;
       $('lastPayload').classList.remove('hidden');
-      log(`已經雲端發送 ${payload}`, 'ok');
+      log(`已寫入雲端 Config（retained）；M5 會存入 NVS db_json`, 'ok');
       return payload;
     }
 
@@ -840,7 +887,7 @@
       if (e.target.checked) {
         if (!isTransportConnected()) {
           e.target.checked = false;
-          log('請先連線雲端 MQTT', 'warn');
+          log('請先連線雲端 Config', 'warn');
           return;
         }
         startAutoSync();
@@ -855,8 +902,8 @@
     const savedId = localStorage.getItem(DEVICE_ID_KEY) || '';
     if (savedId) $('deviceId').value = savedId;
     updateSendControls();
-    log('架構：Internet MQTT 雲端遠端控制（HiveMQ）', 'info');
-    log('請輸入 M5 螢幕左下角 Device ID，再按連線雲端', 'info');
+    log('架構：雲端 Config 輪詢 · M5 直連 KMB ETA · NVS db_json 離線保護', 'info');
+    log('請輸入 M5 螢幕左下角 Device ID，再連線雲端 Config', 'info');
 
     (async () => {
       const db = loadDb();
