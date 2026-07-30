@@ -73,11 +73,15 @@
       <input id="wifiHost" type="text" placeholder="m5-bus.local 或 192.168.x.x"
         class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono text-white outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500" />
       <button id="btnWifiConnect"
-        class="w-full rounded-xl bg-orange-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50">
+        class="mb-2 w-full rounded-xl bg-orange-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50">
         🟠 連線 M5 (WiFi)
       </button>
-      <p class="mt-2 text-xs text-slate-500">手機與 M5 須連同一 WiFi。M5 連網後可用 <code class="text-slate-400">m5-bus.local</code> 或螢幕旁路由器顯示的 IP。</p>
-      <p class="mt-1 text-xs text-amber-500/90">若從 GitHub Pages 開啟，瀏覽器可能詢問「允許存取本地網絡」—請按允許。</p>
+      <a id="btnOpenM5Page" href="#" target="_blank" rel="noopener"
+        class="mb-2 block w-full rounded-xl border border-orange-500/50 px-4 py-2.5 text-center text-sm font-medium text-orange-300 transition hover:bg-orange-500/10">
+        開啟 M5 本機頁（確認 IP）
+      </a>
+      <p class="mt-2 text-xs text-slate-500">手機與 M5 須同一 WiFi。M5 連網後底部會顯示 <code class="text-slate-400">IP x.x.x.x</code>；亦可試 <code class="text-slate-400">m5-bus.local</code>。</p>
+      <p class="mt-1 text-xs text-amber-500/90">請用 Chrome。首次連線會詢問「允許存取本地網絡」—必須按允許。Safari 可能阻擋。</p>
     </div>
   </section>
 
@@ -350,7 +354,22 @@
       updateSendControls();
     }
 
-    async function fetchWithTimeout(url, options = {}, ms = 8000) {
+    function wifiFetchOptions(extra = {}) {
+      const host = normalizeWifiHost(wifiHost || $('wifiHost')?.value || '');
+      const isLocalName = /\.local$/i.test(host) || /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
+      const opts = {
+        mode: 'cors',
+        cache: 'no-store',
+        ...extra,
+      };
+      // Chrome Local Network Access: exempt HTTPS→HTTP private fetches from mixed content.
+      if (isLocalName) {
+        opts.targetAddressSpace = 'local';
+      }
+      return opts;
+    }
+
+    async function fetchWithTimeout(url, options = {}, ms = 10000) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), ms);
       try {
@@ -360,17 +379,45 @@
       }
     }
 
+    function updateM5PageLink() {
+      const host = normalizeWifiHost($('wifiHost').value || wifiHost);
+      const link = $('btnOpenM5Page');
+      if (!link) return;
+      if (host) {
+        link.href = `http://${host}/`;
+        link.classList.remove('pointer-events-none', 'opacity-40');
+      } else {
+        link.href = '#';
+        link.classList.add('pointer-events-none', 'opacity-40');
+      }
+    }
+
     async function connectWifi() {
       const host = normalizeWifiHost($('wifiHost').value);
-      if (!host) throw new Error('請輸入 M5 IP 或 m5-bus.local');
+      if (!host) throw new Error('請輸入 M5 IP（螢幕底部會顯示）或 m5-bus.local');
       wifiHost = host;
       localStorage.setItem(WIFI_HOST_KEY, host);
-      log(`連接 http://${host} …`);
-      const res = await fetchWithTimeout(wifiApiUrl('/api/status'));
+      updateM5PageLink();
+      log(`連接 http://${host}/api/status …`);
+      let res;
+      try {
+        res = await fetchWithTimeout(wifiApiUrl('/api/status'), wifiFetchOptions());
+      } catch (e) {
+        const tip = e.name === 'AbortError'
+          ? '連線逾時'
+          : '瀏覽器阻擋本地網絡（請用 Chrome、允許本地網絡，並確認 IP）';
+        throw new Error(`${tip}：${e.message || e.name}`);
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const status = await res.json();
       if (!status.wifi) throw new Error('M5 尚未連上 WiFi');
       wifiConnected = true;
+      if (status.ip) {
+        wifiHost = status.ip;
+        $('wifiHost').value = status.ip;
+        localStorage.setItem(WIFI_HOST_KEY, status.ip);
+        updateM5PageLink();
+      }
       setWifiUi(true, status.ip || host);
       log(`WiFi 已連線 M5 @ ${status.ip || host}`, 'ok');
       if (status.busA?.route) {
@@ -389,11 +436,11 @@
     async function sendPayloadToM5(payload) {
       if (transportMode === 'wifi') {
         if (!wifiConnected) throw new Error('請先連接 WiFi');
-        const res = await fetchWithTimeout(wifiApiUrl('/api/config'), {
+        const res = await fetchWithTimeout(wifiApiUrl('/api/config'), wifiFetchOptions({
           method: 'POST',
           headers: { 'Content-Type': 'text/plain' },
           body: payload,
-        });
+        }));
         if (!res.ok) {
           const err = await res.text().catch(() => '');
           throw new Error(`HTTP ${res.status}${err ? ` — ${err}` : ''}`);
@@ -908,6 +955,8 @@
     setBleUi(false);
     setWifiUi(false);
     if (wifiHost) $('wifiHost').value = wifiHost;
+    updateM5PageLink();
+    $('wifiHost').addEventListener('input', updateM5PageLink);
     setTransportMode(transportMode);
 
     if (!window.isSecureContext) {
