@@ -58,7 +58,7 @@
         <span id="cloudLabel">未連線</span>
       </div>
     </div>
-    <label class="mb-1 block text-xs text-slate-400" for="deviceId">Device ID（與 M5 螢幕左下角相同）</label>
+    <label class="mb-1 block text-xs text-slate-400" for="deviceId">Device ID（M5 選單 → 關於）</label>
     <input id="deviceId" type="text" placeholder="例如 AC276ED279C4"
       class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono uppercase text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500" />
     <button id="btnCloudConnect"
@@ -218,7 +218,7 @@
         stopId: stopSelect.value.trim(),
         bound: variant?.bound || 'O',
         serviceType: variant?.service_type || '1',
-        stopName: stopSelect.selectedOptions[0]?.textContent || '',
+        stopName: variant?.dest_tc || '',
         variantLabel: variant ? `${variant.orig_tc} → ${variant.dest_tc}（服務 ${variant.service_type}）` : '',
       };
     }
@@ -256,6 +256,44 @@
     let liveWatchdog = null;
     let m5Live = false;
     let lastStatusMs = 0;
+    let lastM5Status = null;
+    let pendingM5Ack = null;
+    function routesMatchStatus(meta, msg) {
+      if (!msg?.busA || !msg?.busB) return false;
+      const stopA = msg.busA.stop || msg.busA.stopId || '';
+      const stopB = msg.busB.stop || msg.busB.stopId || '';
+      return msg.busA.route === meta.routeA &&
+        stopA === meta.stopA &&
+        msg.busB.route === meta.routeB &&
+        stopB === meta.stopB;
+    }
+
+    function checkPendingM5Ack(msg) {
+      if (!pendingM5Ack || !msg) return;
+      if (routesMatchStatus(pendingM5Ack.meta, msg)) {
+        pendingM5Ack.resolve(msg);
+        pendingM5Ack = null;
+      }
+    }
+
+    function waitForM5Ack(meta, timeoutMs = 20000) {
+      if (lastM5Status && routesMatchStatus(meta, lastM5Status)) {
+        return Promise.resolve(lastM5Status);
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (pendingM5Ack) pendingM5Ack = null;
+          reject(new Error('M5 未確認路線（請檢查 Device ID 及 MQTT 綠燈）'));
+        }, timeoutMs);
+        pendingM5Ack = {
+          meta,
+          resolve: (msg) => {
+            clearTimeout(timer);
+            resolve(msg);
+          },
+        };
+      });
+    }
     let kmbRoutes = [];
     let kmbRouteNumbers = [];
     let kmbGeneratedAt = '';
@@ -359,7 +397,7 @@
         throw new Error('mqtt.js 未載入');
       }
       const id = getDeviceId();
-      if (id.length < 8) throw new Error('請輸入 M5 Device ID（螢幕左下角）');
+      if (id.length < 8) throw new Error('請輸入 M5 Device ID（選單 → 關於）');
       localStorage.setItem(DEVICE_ID_KEY, id);
 
       if (mqttClient) disconnectCloud();
@@ -393,8 +431,11 @@
         try {
           const msg = JSON.parse(buf.toString());
           lastStatusMs = Date.now();
+          lastM5Status = msg;
+          checkPendingM5Ack(msg);
           const detail = msg.ip ? `${msg.device || id} · ${msg.ip}` : (msg.device || id);
-          setLiveUi(!!msg.live || !!msg.mqtt, detail);
+          const routeHint = msg.busA?.route ? ` · ${msg.busA.route}/${msg.busB?.route || '?'}` : '';
+          setLiveUi(!!msg.live || !!msg.mqtt, `${detail}${routeHint}`);
         } catch {
           lastStatusMs = Date.now();
           setLiveUi(true, id);
@@ -402,51 +443,25 @@
       });
     }
 
-    function buildCloudConfigBody(dualbus, meta) {
-      return JSON.stringify({
-        v: 1,
-        dualbus,
-        ts: Date.now(),
-        busA: {
-          route: meta.routeA,
-          stop: meta.stopA,
-          stopId: meta.stopA,
-          svc: meta.svcA,
-          serviceType: meta.svcA,
-          bound: meta.boundA,
-        },
-        busB: {
-          route: meta.routeB,
-          stop: meta.stopB,
-          stopId: meta.stopB,
-          svc: meta.svcB,
-          serviceType: meta.svcB,
-          bound: meta.boundB,
-        },
-      });
-    }
-
     async function sendPayloadToM5(payload, meta) {
       if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
       const id = getDeviceId();
-      const body = buildCloudConfigBody(payload, meta);
+      // Raw DUALBUS2 string — M5 parses directly (no JSON pool issues).
       await new Promise((resolve, reject) => {
-        // retain=true → M5 boot / periodic poll gets last cloud config
-        mqttClient.publish(topicConfig(id), body, { qos: 0, retain: true }, (err) => {
+        mqttClient.publish(topicConfig(id), payload, { qos: 0, retain: true }, (err) => {
           if (err) reject(err);
           else resolve();
         });
       });
+      log(`→ MQTT ${payload}`, 'info');
+
       try {
-        const blob = new Blob([body], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `${id}.json`;
-        a.dataset.cloudExport = '1';
-        // Keep last export in memory for optional Pages devices/<id>.json upload
-        window.__lastCloudConfigJson = body;
-        window.__lastCloudConfigDeviceId = id;
-      } catch (_) { /* ignore */ }
+        const ack = await waitForM5Ack(meta);
+        log(`M5 已確認：${ack.busA.route}@${ack.busA.stop} · ${ack.busB.route}@${ack.busB.stop}`, 'ok');
+      } catch (e) {
+        log(e.message, 'warn');
+        throw e;
+      }
     }
 
     // --- placeholders removed: BLE / LAN WiFi ---
@@ -744,8 +759,8 @@
       return { min1, min2 };
     }
 
-    function buildPayload(routeA, stopA, svcA, boundA, routeB, stopB, svcB, boundB) {
-      return `DUALBUS2|${routeA}|${stopA}|${svcA}|${boundA}|${routeB}|${stopB}|${svcB}|${boundB}`;
+    function buildPayload(routeA, stopA, svcA, boundA, dirA, routeB, stopB, svcB, boundB, dirB) {
+      return `DUALBUS3|${routeA}|${stopA}|${svcA}|${boundA}|${dirA}|${routeB}|${stopB}|${svcB}|${boundB}|${dirB}`;
     }
 
     async function sendToM5() {
@@ -765,14 +780,16 @@
 
       const svcA = getServiceType();
       const boundA = variant.bound || 'O';
+      const dirA = variant.dest_tc || '';
       const svcB = getServiceTypeB();
       const boundB = variantB?.bound || 'I';
+      const dirB = variantB?.dest_tc || '';
 
       const stopLabelA = $('stopSelect').selectedOptions[0]?.textContent || stopA;
       const stopLabelB = $('stopSelectB').selectedOptions[0]?.textContent || stopB;
-      log(`設定左欄 ${routeA} · ${stopLabelA} · 服務${svcA}`);
-      log(`設定右欄 ${routeB} · ${stopLabelB} · 服務${svcB}`);
-      const payload = buildPayload(routeA, stopA, svcA, boundA, routeB, stopB, svcB, boundB);
+      log(`設定左欄 ${routeA} → ${dirA || '—'} · ${stopLabelA}`);
+      log(`設定右欄 ${routeB} → ${dirB || '—'} · ${stopLabelB}`);
+      const payload = buildPayload(routeA, stopA, svcA, boundA, dirA, routeB, stopB, svcB, boundB, dirB);
 
       await sendPayloadToM5(payload, {
         routeA, stopA, svcA, boundA, routeB, stopB, svcB, boundB,
@@ -787,7 +804,6 @@
 
       $('lastPayload').textContent = `→ Cloud Config ${payload}`;
       $('lastPayload').classList.remove('hidden');
-      log(`已寫入雲端 Config（retained）；M5 會存入 NVS db_json`, 'ok');
       return payload;
     }
 
@@ -797,7 +813,9 @@
         try {
           await sendToM5();
         } catch (e) {
-          log(`自動同步失敗：${e.message}`, 'err');
+          if (!e.message?.includes('未確認')) {
+            log(`自動同步失敗：${e.message}`, 'err');
+          }
         }
       }, AUTO_SYNC_MS);
       log('自動同步已啟動（30秒）', 'ok');
@@ -903,7 +921,7 @@
     if (savedId) $('deviceId').value = savedId;
     updateSendControls();
     log('架構：雲端 Config 輪詢 · M5 直連 KMB ETA · NVS db_json 離線保護', 'info');
-    log('請輸入 M5 螢幕左下角 Device ID，再連線雲端 Config', 'info');
+    log('請在 M5 選單 → 關於 查看 Device ID，再連線雲端 Config', 'info');
 
     (async () => {
       const db = loadDb();
