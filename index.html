@@ -81,7 +81,7 @@
     </button>
     <button id="tabRadar" type="button"
       class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white">
-      📡 Signal Radar
+      📡 RSSI Monitor
     </button>
   </nav>
 
@@ -252,27 +252,46 @@
   "settings": { "bright": 0-3, "timeout": 0-3, "english": bool,
     "display_mode": 0|1|2,
     "wifi": { "preset": 0-2, "ssid": "...", "password": "..." },
-    "radar": { "ssid": "...", "mac": "AA:BB:CC:DD:EE:FF" } }
+    "radar": { "ssid": "...", "mac": "AA:BB:CC:DD:EE:FF" },
+    "app_mode": "bus"|"rssi_monitor" }
 }</pre>
-      <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=Auto(IMU 4-way 0°/90°/180°/270°) · 1=Force Landscape · 2=Force Portrait · radar.mac 可選（BSSID 優先比對）</p>
+      <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=Auto · 1=Force Landscape · 2=Force Portrait · app_mode 切換 Bus ETA / RSSI Monitor</p>
       <p class="mt-2"><span class="text-slate-400">cmd</span>（非 retained）：</p>
-      <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off", "seq": 123 }</pre>
-      <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>wifi_info</code>、<code>busA</code>/<code>busB</code>、<code>settings</code>、<code>radar_rssi</code>/<code>radar_pct</code>（Signal Radar 模式時）</p>
+      <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off"|"rssi_monitor"|"bus_eta", "seq": 123 }</pre>
+      <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>screen</code>/<code>settings.app_mode</code>、<code>radar_rssi</code>/<code>radar_pct</code>（RSSI Monitor 模式時）</p>
     </details>
   </section>
   </div>
 
   <div id="panelRadar" class="hidden">
   <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
-    <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">Signal Radar Config</h2>
+    <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">RSSI Monitor</h2>
     <p class="mb-4 text-xs leading-relaxed text-slate-500">
-      設定 M5「Signal Radar」模式要追蹤的 WiFi SSID 或 BSSID（MAC）。留空 SSID 時裝置會追蹤目前連線的 WiFi。
-      在 M5 選單 → <span class="text-slate-300">Signal Radar</span> 開啟即時 RSSI 監測。
+      設定 M5「RSSI Monitor」要追蹤的 WiFi SSID 或 BSSID（MAC）。裝置會強制直向 135×240 顯示，高靈敏度 RSSI 進度條（-30～-90 dBm）。
+      亦可遠端切換 Bus ETA ↔ RSSI Monitor 模式。
     </p>
 
     <p id="radarLiveLine" class="mb-3 hidden rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-400">
-      M5 Radar：等待資料…
+      M5 RSSI：等待資料…
     </p>
+
+    <label class="mb-1 block text-xs text-slate-400" for="appModeSelect">裝置模式</label>
+    <select id="appModeSelect"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500">
+      <option value="bus">Bus ETA（九巴／城巴到站）</option>
+      <option value="rssi_monitor">RSSI Monitor（WiFi 訊號監測）</option>
+    </select>
+
+    <div class="mb-4 grid grid-cols-2 gap-2">
+      <button id="btnEnterRssi" type="button"
+        class="rounded-xl border border-cyan-600/50 bg-cyan-950 px-3 py-2.5 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-900 disabled:cursor-not-allowed disabled:opacity-50">
+        ▶ 進入 RSSI Monitor
+      </button>
+      <button id="btnExitRssi" type="button"
+        class="rounded-xl border border-emerald-600/50 bg-emerald-950 px-3 py-2.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50">
+        ◀ 返回 Bus ETA
+      </button>
+    </div>
 
     <label class="mb-1 block text-xs text-slate-400" for="radarSsidInput">Target SSID（目標 WiFi 名稱）</label>
     <input id="radarSsidInput" type="text" maxlength="32" placeholder="例：DH / iPhone（可留空＝目前 WiFi）"
@@ -281,13 +300,13 @@
     <label class="mb-1 block text-xs text-slate-400" for="radarMacInput">Target MAC / BSSID（可選）</label>
     <input id="radarMacInput" type="text" maxlength="17" placeholder="例：AC:27:6E:D2:79:C4"
       class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono uppercase text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
-    <p class="mb-4 text-xs text-slate-500">若填 MAC，將優先以 BSSID 比對（適合同名 SSID 多 AP）。格式 <code class="text-slate-400">AA:BB:CC:DD:EE:FF</code></p>
+    <p class="mb-4 text-xs text-slate-500">若填 MAC，將優先以 BSSID 比對。格式 <code class="text-slate-400">AA:BB:CC:DD:EE:FF</code></p>
 
     <button id="btnSendRadar" type="button"
       class="w-full rounded-xl border border-cyan-600/50 bg-cyan-950 px-4 py-3 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-900 disabled:cursor-not-allowed disabled:opacity-50">
-      📡 發送 Signal Radar 設定到 M5
+      📡 發送 RSSI Monitor 設定到 M5
     </button>
-    <p class="mt-2 text-xs text-slate-500">經 MQTT <code class="text-slate-400">m5bus/&lt;DeviceID&gt;/config</code> 傳送 <code class="text-slate-400">settings.radar</code>（retained）。</p>
+    <p class="mt-2 text-xs text-slate-500">經 MQTT <code class="text-slate-400">config</code> 傳送 <code class="text-slate-400">settings.radar</code> + <code class="text-slate-400">settings.app_mode</code>（retained）。</p>
   </section>
   </div>
 
@@ -339,7 +358,7 @@
     function defaultDb() {
       return {
         v: DB_VERSION,
-        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '', radarSsid: '', radarMac: '' },
+        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '', radarSsid: '', radarMac: '', appMode: 'bus' },
         busA: {
           co: 'KMB',
           route: DEFAULT_ROUTE,
@@ -630,6 +649,16 @@
 
     const DISPLAY_MODE_LABELS = ['Auto (IMU)', 'Force Landscape', 'Force Portrait'];
 
+    function getAppModeFromUi() {
+      return $('appModeSelect').value === 'rssi_monitor' ? 'rssi_monitor' : 'bus';
+    }
+
+    function applyAppModeToUi(mode) {
+      if (!mode) return;
+      const isRssi = mode === 'rssi_monitor' || mode === 'rssi' || mode === 'radar';
+      $('appModeSelect').value = isRssi ? 'rssi_monitor' : 'bus';
+    }
+
     function getRadarFromUi() {
       return {
         ssid: $('radarSsidInput').value.trim(),
@@ -655,11 +684,15 @@
       const mac = radar.mac || radar.bssid || '';
       if (msg.radar_rssi != null && msg.radar_pct != null) {
         const ch = msg.radar_channel ? ` · CH ${msg.radar_channel}` : '';
-        el.textContent = `M5 Radar Live：${msg.radar_rssi} dBm · ${msg.radar_pct}%${ch} · ${ssid}${mac ? ` · ${mac}` : ''}`;
+        el.textContent = `M5 RSSI Live：${msg.radar_rssi} dBm · ${msg.radar_pct}%${ch} · ${ssid}${mac ? ` · ${mac}` : ''}`;
         el.className = 'mb-3 rounded-lg bg-cyan-950/50 px-3 py-2 text-xs text-cyan-300';
         el.classList.remove('hidden');
+      } else if (msg.screen === 'rssi_monitor' || msg.settings?.app_mode === 'rssi_monitor') {
+        el.textContent = `M5 模式：RSSI Monitor · ${ssid}${mac ? ` · ${mac}` : ''}`;
+        el.className = 'mb-3 rounded-lg bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300';
+        el.classList.remove('hidden');
       } else if (radar.ssid || mac) {
-        el.textContent = `M5 Radar 設定：${ssid}${mac ? ` · MAC ${mac}` : ''}（裝置未在 Radar 模式）`;
+        el.textContent = `M5 RSSI 設定：${ssid}${mac ? ` · MAC ${mac}` : ''}（Bus ETA 模式）`;
         el.className = 'mb-3 rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-400';
         el.classList.remove('hidden');
       } else {
@@ -673,6 +706,7 @@
         timeout: Number($('timeoutSelect').value),
         english: $('languageSelect').value === '1',
         display_mode: Number($('displayModeSelect').value),
+        app_mode: getAppModeFromUi(),
         radar: getRadarFromUi(),
       };
     }
@@ -684,6 +718,7 @@
         timeout: settings.timeout,
         english: settings.english,
         display_mode: settings.display_mode,
+        appMode: settings.app_mode || getAppModeFromUi(),
         radarSsid: radar.ssid || '',
         radarMac: radar.mac || '',
       };
@@ -706,6 +741,7 @@
     function applyM5StatusToUi(msg) {
       applySettingsToUi(msg?.settings);
       applyRadarToUi(msg?.settings?.radar);
+      applyAppModeToUi(msg?.screen || msg?.settings?.app_mode);
       if (msg?.wifi_info) {
         applyWifiToUi({
           preset: msg.wifi_info.preset,
@@ -752,6 +788,8 @@
       $('btnSend').disabled = !connected;
       $('btnSendSettings').disabled = !connected;
       $('btnSendRadar').disabled = !connected;
+      $('btnEnterRssi').disabled = !connected;
+      $('btnExitRssi').disabled = !connected;
       $('btnSendWifi').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
@@ -1345,6 +1383,7 @@
       return JSON.stringify({
         v: 2,
         settings: {
+          app_mode: getAppModeFromUi(),
           radar: getRadarFromUi(),
         },
       });
@@ -1448,14 +1487,15 @@
         throw new Error('請先連線雲端 Config');
       }
       const radar = getRadarFromUi();
-      log(`Signal Radar：SSID=${radar.ssid || '（目前 WiFi）'}${radar.mac ? ` · MAC ${radar.mac}` : ''}`);
+      const mode = getAppModeFromUi();
+      log(`RSSI Monitor：模式=${mode} · SSID=${radar.ssid || '（目前 WiFi）'}${radar.mac ? ` · MAC ${radar.mac}` : ''}`);
       const payload = buildRadarOnlyJson();
       const meta = buildAckMeta();
       await sendPayloadToM5(payload, meta);
       const db = loadDb();
       db.config = { ...db.config, radarSsid: radar.ssid, radarMac: radar.mac };
       saveDb(db);
-      log('Signal Radar 設定已儲存至本機 DB', 'ok');
+      log('RSSI Monitor 設定已儲存至本機 DB', 'ok');
       $('lastPayload').textContent = `→ Radar JSON (${payload.length} bytes)`;
       $('lastPayload').classList.remove('hidden');
       return payload;
@@ -1585,11 +1625,29 @@
       try {
         await sendRadarOnly();
       } catch (e) {
-        log(`Radar 發送失敗：${e.message}`, 'err');
+        log(`RSSI 發送失敗：${e.message}`, 'err');
       }
     });
 
-    ['radarSsidInput', 'radarMacInput'].forEach((id) => {
+    $('btnEnterRssi').addEventListener('click', async () => {
+      try {
+        $('appModeSelect').value = 'rssi_monitor';
+        await sendRadarOnly();
+      } catch (e) {
+        log(`進入 RSSI 失敗：${e.message}`, 'err');
+      }
+    });
+
+    $('btnExitRssi').addEventListener('click', async () => {
+      try {
+        $('appModeSelect').value = 'bus';
+        await sendCommand('bus_eta', '返回 Bus ETA');
+      } catch (e) {
+        log(`返回 Bus ETA 失敗：${e.message}`, 'err');
+      }
+    });
+
+    ['radarSsidInput', 'radarMacInput', 'appModeSelect'].forEach((id) => {
       $(id).addEventListener('input', () => schedulePersistDb());
     });
 
@@ -1712,6 +1770,7 @@
       }
       toggleWifiCustomFields();
       applyRadarToUi({ ssid: db.config.radarSsid, mac: db.config.radarMac });
+      applyAppModeToUi(db.config.appMode || 'bus');
       if (db.busA?.co) $('coSelectA').value = db.busA.co;
       if (db.busB?.co) $('coSelectB').value = db.busB.co;
       const ok = await loadAllRoutes();
