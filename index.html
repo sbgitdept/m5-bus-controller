@@ -257,7 +257,8 @@
 }</pre>
       <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=Auto · 1=Force Landscape · 2=Force Portrait · app_mode 切換 Bus ETA / RSSI Monitor</p>
       <p class="mt-2"><span class="text-slate-400">cmd</span>（非 retained）：</p>
-      <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off"|"rssi_monitor"|"bus_eta", "seq": 123 }</pre>
+      <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off"|"rssi_monitor"|"bus_eta"|"scan_wifi", "seq": 123 }</pre>
+      <p class="mt-2"><span class="text-slate-400">wifi_scan</span>（M5 發布）：<code>{"networks":[{"ssid","bssid","rssi","ch"},...]}</code> → <code>m5bus/&lt;ID&gt;/wifi_scan</code></p>
       <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>screen</code>/<code>settings.app_mode</code>、<code>radar_rssi</code>/<code>radar_pct</code>（RSSI Monitor 模式時）</p>
     </details>
   </section>
@@ -292,6 +293,17 @@
         ◀ 返回 Bus ETA
       </button>
     </div>
+
+    <button id="btnRadarScanWifi" type="button"
+      class="mb-2 w-full rounded-xl border border-cyan-600/50 bg-cyan-950 px-3 py-2.5 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-900 disabled:cursor-not-allowed disabled:opacity-50">
+      📡 用 M5 掃描附近 WiFi（Live Scan）
+    </button>
+
+    <label class="mb-1 block text-xs text-slate-400" for="radarLiveScanSelect">附近 WiFi（M5 即時掃描結果）</label>
+    <select id="radarLiveScanSelect" disabled
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:opacity-50">
+      <option value="">— 按上方按鈕掃描 —</option>
+    </select>
 
     <label class="mb-1 block text-xs text-slate-400" for="radarSsidPresetSelect">Scan SSID（要監測的 WiFi）</label>
     <select id="radarSsidPresetSelect"
@@ -467,6 +479,7 @@
     const MQTT_WS_URL = 'wss://broker.hivemq.com:8884/mqtt';
 
     let mqttClient = null;
+    let liveWifiNetworks = [];
     let cloudConnected = false;
     let autoSyncTimer = null;
     let liveWatchdog = null;
@@ -587,6 +600,7 @@
     function topicConfig(id) { return `m5bus/${id}/config`; }
     function topicCmd(id) { return `m5bus/${id}/cmd`; }
     function topicStatus(id) { return `m5bus/${id}/status`; }
+    function topicWifiScan(id) { return `m5bus/${id}/wifi_scan`; }
 
     function getWifiFromUi() {
       const presetVal = $('wifiPresetSelect').value;
@@ -688,6 +702,48 @@
     function toggleRadarCustomFields() {
       const custom = $('radarSsidPresetSelect').value === 'custom';
       $('radarCustomFields').classList.toggle('hidden', !custom);
+    }
+
+    function applyWifiScanResults(msg) {
+      liveWifiNetworks = Array.isArray(msg?.networks) ? msg.networks : [];
+      const sel = $('radarLiveScanSelect');
+      sel.innerHTML = '';
+      if (!liveWifiNetworks.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '（未找到網絡）';
+        sel.appendChild(opt);
+        sel.disabled = true;
+        log('M5 WiFi 掃描：未找到網絡', 'warn');
+        return;
+      }
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = '— 選擇附近 WiFi —';
+      sel.appendChild(placeholder);
+      liveWifiNetworks.forEach((n, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        const ssid = n.ssid || '(hidden)';
+        opt.textContent = `${ssid} (${n.rssi} dBm)`;
+        sel.appendChild(opt);
+      });
+      sel.disabled = false;
+      log(`M5 WiFi 掃描：找到 ${liveWifiNetworks.length} 個網絡`, 'ok');
+    }
+
+    function applyLiveScanSelection() {
+      const idx = $('radarLiveScanSelect').value;
+      if (idx === '') return;
+      const n = liveWifiNetworks[Number(idx)];
+      if (!n) return;
+      $('radarSsidPresetSelect').value = 'custom';
+      $('radarSsidInput').value = n.ssid || '';
+      $('radarMacInput').value = (n.bssid || '').toUpperCase();
+      toggleRadarCustomFields();
+      schedulePersistDb();
+      const label = n.ssid || n.bssid || '?';
+      log(`已選擇：${label} · ${n.rssi} dBm · MAC ${n.bssid || '—'}`, 'ok');
     }
 
     function applyRadarSsidToUi(ssid) {
@@ -852,6 +908,7 @@
       $('btnEnterRssi').disabled = !connected;
       $('btnExitRssi').disabled = !connected;
       $('btnRadarUseM5Wifi').disabled = !connected;
+      $('btnRadarScanWifi').disabled = !connected;
       $('btnSendWifi').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
@@ -934,7 +991,7 @@
       if (mqttClient) disconnectCloud();
 
       log(`連線 ${MQTT_WS_URL} …`);
-      log(`訂閱 ${topicStatus(id)} · 發送 ${topicConfig(id)}`);
+      log(`訂閱 ${topicStatus(id)} · ${topicWifiScan(id)} · 發送 ${topicConfig(id)}`);
 
       mqttClient = mqtt.connect(MQTT_WS_URL, {
         clientId: `web-${id}-${Math.random().toString(16).slice(2, 8)}`,
@@ -946,6 +1003,7 @@
       mqttClient.on('connect', () => {
         setCloudUi(true, 'HiveMQ');
         mqttClient.subscribe(topicStatus(id), { qos: 0 });
+        mqttClient.subscribe(topicWifiScan(id), { qos: 0 });
         startLiveWatchdog();
         log('雲端 Config 已連線', 'ok');
       });
@@ -958,7 +1016,18 @@
       });
 
       mqttClient.on('message', (topic, buf) => {
-        if (topic !== topicStatus(id)) return;
+        const statusTopic = topicStatus(id);
+        const scanTopic = topicWifiScan(id);
+        if (topic === scanTopic) {
+          try {
+            const msg = JSON.parse(buf.toString());
+            applyWifiScanResults(msg);
+          } catch {
+            log('wifi_scan 解析失敗', 'err');
+          }
+          return;
+        }
+        if (topic !== statusTopic) return;
         try {
           const msg = JSON.parse(buf.toString());
           lastStatusMs = Date.now();
@@ -1726,6 +1795,19 @@
 
     $('btnRadarUseM5Wifi').addEventListener('click', () => {
       useM5WifiForRadar();
+    });
+
+    $('btnRadarScanWifi').addEventListener('click', async () => {
+      try {
+        await sendCommand('scan_wifi', 'M5 WiFi 掃描');
+        log('已發送 scan_wifi，等待 M5 結果…', 'info');
+      } catch (e) {
+        log(`WiFi 掃描失敗：${e.message}`, 'err');
+      }
+    });
+
+    $('radarLiveScanSelect').addEventListener('change', () => {
+      applyLiveScanSelection();
     });
 
     $('btnCloudConnect').addEventListener('click', () => {
