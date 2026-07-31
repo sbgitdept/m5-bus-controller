@@ -293,9 +293,27 @@
       </button>
     </div>
 
-    <label class="mb-1 block text-xs text-slate-400" for="radarSsidInput">Target SSID（目標 WiFi 名稱）</label>
-    <input id="radarSsidInput" type="text" maxlength="32" placeholder="例：DH / iPhone（可留空＝目前 WiFi）"
-      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+    <label class="mb-1 block text-xs text-slate-400" for="radarSsidPresetSelect">Scan SSID（要監測的 WiFi）</label>
+    <select id="radarSsidPresetSelect"
+      class="mb-2 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500">
+      <option value="auto">目前連線 WiFi（自動）</option>
+      <option value="0">DH</option>
+      <option value="1">iPhone</option>
+      <option value="2">Slimbeauty</option>
+      <option value="custom">自訂 SSID</option>
+    </select>
+
+    <div id="radarCustomFields" class="mb-2 hidden">
+      <label class="mb-1 block text-xs text-slate-400" for="radarSsidInput">自訂 Scan SSID</label>
+      <input id="radarSsidInput" type="text" maxlength="32" placeholder="輸入要 scan 的 WiFi 名稱"
+        class="w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+    </div>
+
+    <button id="btnRadarUseM5Wifi" type="button"
+      class="mb-3 w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+      📶 使用 M5 目前 WiFi 作為 Scan SSID
+    </button>
+    <p class="mb-4 text-xs text-slate-500">選「自動」時，M5 會 scan 目前所連 WiFi 的 SSID；亦可指定其他網絡名稱。</p>
 
     <label class="mb-1 block text-xs text-slate-400" for="radarMacInput">Target MAC / BSSID（可選）</label>
     <input id="radarMacInput" type="text" maxlength="17" placeholder="例：AC:27:6E:D2:79:C4"
@@ -358,7 +376,7 @@
     function defaultDb() {
       return {
         v: DB_VERSION,
-        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '', radarSsid: '', radarMac: '', appMode: 'bus' },
+        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '', radarSsidPreset: 'auto', radarCustomSsid: '', radarSsid: '', radarMac: '', appMode: 'bus' },
         busA: {
           co: 'KMB',
           route: DEFAULT_ROUTE,
@@ -659,16 +677,57 @@
       $('appModeSelect').value = isRssi ? 'rssi_monitor' : 'bus';
     }
 
+    function getRadarSsidFromUi() {
+      const presetVal = $('radarSsidPresetSelect').value;
+      if (presetVal === 'auto') return '';
+      if (presetVal === 'custom') return $('radarSsidInput').value.trim();
+      const preset = Number(presetVal);
+      return WIFI_PRESETS[preset] || '';
+    }
+
+    function toggleRadarCustomFields() {
+      const custom = $('radarSsidPresetSelect').value === 'custom';
+      $('radarCustomFields').classList.toggle('hidden', !custom);
+    }
+
+    function applyRadarSsidToUi(ssid) {
+      if (ssid == null) return;
+      if (!ssid) {
+        $('radarSsidPresetSelect').value = 'auto';
+      } else {
+        const idx = WIFI_PRESETS.indexOf(ssid);
+        if (idx >= 0) {
+          $('radarSsidPresetSelect').value = String(idx);
+        } else {
+          $('radarSsidPresetSelect').value = 'custom';
+          $('radarSsidInput').value = ssid;
+        }
+      }
+      toggleRadarCustomFields();
+    }
+
+    function useM5WifiForRadar() {
+      const info = lastM5Status?.wifi_info || {};
+      const ssid = info.ssid || lastM5Status?.wifi_ssid || '';
+      if (!ssid) {
+        log('M5 尚未回報 WiFi SSID，請先連線雲端 Config', 'warn');
+        return;
+      }
+      applyRadarSsidToUi(ssid);
+      schedulePersistDb();
+      log(`Scan SSID 已設為：${ssid}`, 'ok');
+    }
+
     function getRadarFromUi() {
       return {
-        ssid: $('radarSsidInput').value.trim(),
+        ssid: getRadarSsidFromUi(),
         mac: $('radarMacInput').value.trim().toUpperCase(),
       };
     }
 
     function applyRadarToUi(radar) {
       if (!radar) return;
-      if (radar.ssid != null) $('radarSsidInput').value = radar.ssid;
+      if (radar.ssid != null) applyRadarSsidToUi(radar.ssid);
       const mac = radar.mac ?? radar.bssid;
       if (mac != null) $('radarMacInput').value = mac;
     }
@@ -719,6 +778,8 @@
         english: settings.english,
         display_mode: settings.display_mode,
         appMode: settings.app_mode || getAppModeFromUi(),
+        radarSsidPreset: $('radarSsidPresetSelect').value,
+        radarCustomSsid: $('radarSsidInput').value,
         radarSsid: radar.ssid || '',
         radarMac: radar.mac || '',
       };
@@ -790,6 +851,7 @@
       $('btnSendRadar').disabled = !connected;
       $('btnEnterRssi').disabled = !connected;
       $('btnExitRssi').disabled = !connected;
+      $('btnRadarUseM5Wifi').disabled = !connected;
       $('btnSendWifi').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
@@ -1493,7 +1555,13 @@
       const meta = buildAckMeta();
       await sendPayloadToM5(payload, meta);
       const db = loadDb();
-      db.config = { ...db.config, radarSsid: radar.ssid, radarMac: radar.mac };
+      db.config = {
+        ...db.config,
+        radarSsidPreset: $('radarSsidPresetSelect').value,
+        radarCustomSsid: $('radarSsidInput').value,
+        radarSsid: radar.ssid,
+        radarMac: radar.mac,
+      };
       saveDb(db);
       log('RSSI Monitor 設定已儲存至本機 DB', 'ok');
       $('lastPayload').textContent = `→ Radar JSON (${payload.length} bytes)`;
@@ -1647,8 +1715,17 @@
       }
     });
 
-    ['radarSsidInput', 'radarMacInput', 'appModeSelect'].forEach((id) => {
+    ['radarSsidPresetSelect', 'radarSsidInput', 'radarMacInput', 'appModeSelect'].forEach((id) => {
       $(id).addEventListener('input', () => schedulePersistDb());
+      $(id).addEventListener('change', () => schedulePersistDb());
+    });
+
+    $('radarSsidPresetSelect').addEventListener('change', () => {
+      toggleRadarCustomFields();
+    });
+
+    $('btnRadarUseM5Wifi').addEventListener('click', () => {
+      useM5WifiForRadar();
     });
 
     $('btnCloudConnect').addEventListener('click', () => {
@@ -1769,7 +1846,14 @@
         $('wifiSsidInput').value = db.config.wifiCustomSsid;
       }
       toggleWifiCustomFields();
+      if (db.config.radarSsidPreset != null) {
+        $('radarSsidPresetSelect').value = db.config.radarSsidPreset;
+      }
+      if (db.config.radarCustomSsid) {
+        $('radarSsidInput').value = db.config.radarCustomSsid;
+      }
       applyRadarToUi({ ssid: db.config.radarSsid, mac: db.config.radarMac });
+      toggleRadarCustomFields();
       applyAppModeToUi(db.config.appMode || 'bus');
       if (db.busA?.co) $('coSelectA').value = db.busA.co;
       if (db.busB?.co) $('coSelectB').value = db.busB.co;
