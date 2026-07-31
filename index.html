@@ -480,6 +480,10 @@
 
     let mqttClient = null;
     let liveWifiNetworks = [];
+    let wifiScanPending = false;
+    let wifiScanTimeout = null;
+    const WIFI_SCAN_UI_TIMEOUT_MS = 10000;
+    const BTN_RADAR_SCAN_LABEL = '📡 用 M5 掃描附近 WiFi（Live Scan）';
     let cloudConnected = false;
     let autoSyncTimer = null;
     let liveWatchdog = null;
@@ -704,8 +708,27 @@
       $('radarCustomFields').classList.toggle('hidden', !custom);
     }
 
+    function finishWifiScanUi() {
+      if (!wifiScanPending) return;
+      wifiScanPending = false;
+      if (wifiScanTimeout) {
+        clearTimeout(wifiScanTimeout);
+        wifiScanTimeout = null;
+      }
+      const btn = $('btnRadarScanWifi');
+      btn.textContent = BTN_RADAR_SCAN_LABEL;
+      btn.disabled = !isTransportConnected();
+    }
+
     function applyWifiScanResults(msg) {
-      liveWifiNetworks = Array.isArray(msg?.networks) ? msg.networks : [];
+      finishWifiScanUi();
+      try {
+        liveWifiNetworks = Array.isArray(msg?.networks) ? msg.networks : [];
+      } catch {
+        liveWifiNetworks = [];
+        log('wifi_scan 解析失敗', 'err');
+        return;
+      }
       const sel = $('radarLiveScanSelect');
       sel.innerHTML = '';
       if (!liveWifiNetworks.length) {
@@ -725,7 +748,8 @@
         const opt = document.createElement('option');
         opt.value = String(i);
         const ssid = n.ssid || '(hidden)';
-        opt.textContent = `${ssid} (${n.rssi} dBm)`;
+        const ch = n.ch != null ? ` [CH ${n.ch}]` : '';
+        opt.textContent = `${ssid} (${n.rssi} dBm)${ch}`;
         sel.appendChild(opt);
       });
       sel.disabled = false;
@@ -969,6 +993,7 @@
 
     function disconnectCloud() {
       stopLiveWatchdog();
+      finishWifiScanUi();
       if (mqttClient) {
         try { mqttClient.end(true); } catch { /* ignore */ }
         mqttClient = null;
@@ -1018,11 +1043,12 @@
       mqttClient.on('message', (topic, buf) => {
         const statusTopic = topicStatus(id);
         const scanTopic = topicWifiScan(id);
-        if (topic === scanTopic) {
+        if (topic === scanTopic || topic.endsWith('/wifi_scan')) {
           try {
             const msg = JSON.parse(buf.toString());
             applyWifiScanResults(msg);
           } catch {
+            finishWifiScanUi();
             log('wifi_scan 解析失敗', 'err');
           }
           return;
@@ -1068,6 +1094,29 @@
         log(e.message, 'warn');
         throw e;
       }
+    }
+
+    async function sendWifiScanCommand() {
+      if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
+      const id = getDeviceId();
+      const btn = $('btnRadarScanWifi');
+      btn.textContent = '掃描中…';
+      btn.disabled = true;
+      wifiScanPending = true;
+      if (wifiScanTimeout) clearTimeout(wifiScanTimeout);
+      wifiScanTimeout = setTimeout(() => {
+        if (!wifiScanPending) return;
+        finishWifiScanUi();
+        log('掃描逾時，請重試', 'err');
+      }, WIFI_SCAN_UI_TIMEOUT_MS);
+      const payload = JSON.stringify({ action: 'scan_wifi', seq: Date.now() });
+      await new Promise((resolve, reject) => {
+        mqttClient.publish(topicCmd(id), payload, { qos: 0, retain: false }, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      log('→ MQTT cmd scan_wifi（等待 M5 wifi_scan…）', 'info');
     }
 
     async function sendCommand(action, label) {
@@ -1799,9 +1848,9 @@
 
     $('btnRadarScanWifi').addEventListener('click', async () => {
       try {
-        await sendCommand('scan_wifi', 'M5 WiFi 掃描');
-        log('已發送 scan_wifi，等待 M5 結果…', 'info');
+        await sendWifiScanCommand();
       } catch (e) {
+        finishWifiScanUi();
         log(`WiFi 掃描失敗：${e.message}`, 'err');
       }
     });
