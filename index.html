@@ -482,8 +482,9 @@
     let liveWifiNetworks = [];
     let wifiScanPending = false;
     let wifiScanTimeout = null;
-    const WIFI_SCAN_UI_TIMEOUT_MS = 10000;
+    const WIFI_SCAN_UI_TIMEOUT_MS = 12000;
     const BTN_RADAR_SCAN_LABEL = '📡 用 M5 掃描附近 WiFi（Live Scan）';
+    const BTN_RADAR_SCAN_LOADING = 'M5 正在掃描周圍 WiFi 中 (約需 3-5 秒)...';
     let cloudConnected = false;
     let autoSyncTimer = null;
     let liveWatchdog = null;
@@ -734,7 +735,7 @@
       if (!liveWifiNetworks.length) {
         const opt = document.createElement('option');
         opt.value = '';
-        opt.textContent = '（未找到網絡）';
+        opt.textContent = '(未搜尋到任何 WiFi 熱點)';
         sel.appendChild(opt);
         sel.disabled = true;
         log('M5 WiFi 掃描：未找到網絡', 'warn');
@@ -748,8 +749,10 @@
         const opt = document.createElement('option');
         opt.value = String(i);
         const ssid = n.ssid || '(hidden)';
+        const rssi = n.rssi != null ? ` (${n.rssi} dBm)` : '';
         const ch = n.ch != null ? ` [CH ${n.ch}]` : '';
-        opt.textContent = `${ssid} (${n.rssi} dBm)${ch}`;
+        const mac = n.bssid ? ` - MAC: ${String(n.bssid).toUpperCase()}` : '';
+        opt.textContent = `${ssid}${rssi}${ch}${mac}`;
         sel.appendChild(opt);
       });
       sel.disabled = false;
@@ -1045,7 +1048,9 @@
         const scanTopic = topicWifiScan(id);
         if (topic === scanTopic || topic.endsWith('/wifi_scan')) {
           try {
-            const msg = JSON.parse(buf.toString());
+            const raw = buf.toString();
+            console.log('[WiFi Scan RX]', raw);
+            const msg = JSON.parse(raw);
             applyWifiScanResults(msg);
           } catch {
             finishWifiScanUi();
@@ -1100,14 +1105,17 @@
       if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
       const id = getDeviceId();
       const btn = $('btnRadarScanWifi');
-      btn.textContent = '掃描中…';
+      const sel = $('radarLiveScanSelect');
+      btn.textContent = BTN_RADAR_SCAN_LOADING;
       btn.disabled = true;
+      sel.innerHTML = '<option value="">掃描中…</option>';
+      sel.disabled = true;
       wifiScanPending = true;
       if (wifiScanTimeout) clearTimeout(wifiScanTimeout);
       wifiScanTimeout = setTimeout(() => {
         if (!wifiScanPending) return;
         finishWifiScanUi();
-        log('掃描逾時，請重試', 'err');
+        log('M5 未回傳掃描結果，請確認 M5 在線並重試', 'err');
       }, WIFI_SCAN_UI_TIMEOUT_MS);
       const payload = JSON.stringify({ action: 'scan_wifi', seq: Date.now() });
       await new Promise((resolve, reject) => {
