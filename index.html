@@ -73,7 +73,19 @@
     <p class="mt-1 text-xs text-slate-500">Broker：<code class="text-slate-400">broker.hivemq.com</code>（WSS）· 頂部徽章 = M5 Live + 電量</p>
   </section>
 
-  <!-- WiFi Settings -->
+  <!-- App tabs -->
+  <nav class="mb-4 flex rounded-xl border border-surface-border bg-surface-card p-1 shadow-lg">
+    <button id="tabBus" type="button"
+      class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-emerald-600 text-white">
+      🚌 Bus ETA
+    </button>
+    <button id="tabRadar" type="button"
+      class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white">
+      📡 Signal Radar
+    </button>
+  </nav>
+
+  <div id="panelBus">
   <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
     <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">WiFi 設定</h2>
     <p id="wifiStatusLine" class="mb-3 rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-400">
@@ -239,14 +251,45 @@
   "busB": { "co": "KMB"|"CTB", "route", "stop", "svc", "bound", "name" },
   "settings": { "bright": 0-3, "timeout": 0-3, "english": bool,
     "display_mode": 0|1|2,
-    "wifi": { "preset": 0-2, "ssid": "...", "password": "..." } }
+    "wifi": { "preset": 0-2, "ssid": "...", "password": "..." },
+    "radar": { "ssid": "...", "mac": "AA:BB:CC:DD:EE:FF" } }
 }</pre>
-      <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=Auto(IMU 4-way 0°/90°/180°/270°) · 1=Force Landscape · 2=Force Portrait</p>
+      <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=Auto(IMU 4-way 0°/90°/180°/270°) · 1=Force Landscape · 2=Force Portrait · radar.mac 可選（BSSID 優先比對）</p>
       <p class="mt-2"><span class="text-slate-400">cmd</span>（非 retained）：</p>
       <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off", "seq": 123 }</pre>
-      <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>wifi_info</code>、<code>busA</code>/<code>busB</code>、<code>settings</code></p>
+      <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>wifi_info</code>、<code>busA</code>/<code>busB</code>、<code>settings</code>、<code>radar_rssi</code>/<code>radar_pct</code>（Signal Radar 模式時）</p>
     </details>
   </section>
+  </div>
+
+  <div id="panelRadar" class="hidden">
+  <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
+    <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">Signal Radar Config</h2>
+    <p class="mb-4 text-xs leading-relaxed text-slate-500">
+      設定 M5「Signal Radar」模式要追蹤的 WiFi SSID 或 BSSID（MAC）。留空 SSID 時裝置會追蹤目前連線的 WiFi。
+      在 M5 選單 → <span class="text-slate-300">Signal Radar</span> 開啟即時 RSSI 監測。
+    </p>
+
+    <p id="radarLiveLine" class="mb-3 hidden rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-400">
+      M5 Radar：等待資料…
+    </p>
+
+    <label class="mb-1 block text-xs text-slate-400" for="radarSsidInput">Target SSID（目標 WiFi 名稱）</label>
+    <input id="radarSsidInput" type="text" maxlength="32" placeholder="例：DH / iPhone（可留空＝目前 WiFi）"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+
+    <label class="mb-1 block text-xs text-slate-400" for="radarMacInput">Target MAC / BSSID（可選）</label>
+    <input id="radarMacInput" type="text" maxlength="17" placeholder="例：AC:27:6E:D2:79:C4"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 font-mono uppercase text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+    <p class="mb-4 text-xs text-slate-500">若填 MAC，將優先以 BSSID 比對（適合同名 SSID 多 AP）。格式 <code class="text-slate-400">AA:BB:CC:DD:EE:FF</code></p>
+
+    <button id="btnSendRadar" type="button"
+      class="w-full rounded-xl border border-cyan-600/50 bg-cyan-950 px-4 py-3 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-900 disabled:cursor-not-allowed disabled:opacity-50">
+      📡 發送 Signal Radar 設定到 M5
+    </button>
+    <p class="mt-2 text-xs text-slate-500">經 MQTT <code class="text-slate-400">m5bus/&lt;DeviceID&gt;/config</code> 傳送 <code class="text-slate-400">settings.radar</code>（retained）。</p>
+  </section>
+  </div>
 
   <!-- Auto Sync -->
   <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
@@ -270,8 +313,6 @@
     </div>
     <div id="lastPayload" class="mt-3 hidden rounded-lg bg-slate-900 px-3 py-2 font-mono text-xs text-emerald-400"></div>
   </section>
-
-  </div>
 
   <script>
     const BLE_DEVICE_NAME = 'M5-Bus';
@@ -298,7 +339,7 @@
     function defaultDb() {
       return {
         v: DB_VERSION,
-        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '' },
+        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '', radarSsid: '', radarMac: '' },
         busA: {
           co: 'KMB',
           route: DEFAULT_ROUTE,
@@ -331,6 +372,10 @@
         db.busB = { ...defaultDb().busB, ...(db.busB || {}) };
         db.history = Array.isArray(db.history) ? db.history : [];
         db.config = { ...defaultDb().config, ...(db.config || {}) };
+        if (db.config.radar && typeof db.config.radar === 'object') {
+          if (!db.config.radarSsid) db.config.radarSsid = db.config.radar.ssid || '';
+          if (!db.config.radarMac) db.config.radarMac = db.config.radar.mac || db.config.radar.bssid || '';
+        }
         return db;
       } catch {
         return defaultDb();
@@ -360,7 +405,7 @@
       const db = loadDb();
       db.busA = snapshotBus('A');
       db.busB = snapshotBus('B');
-      db.config = { ...db.config, ...getSettingsFromUi() };
+      db.config = { ...db.config, ...settingsToDbConfig(getSettingsFromUi()) };
       saveDb(db);
     }
 
@@ -409,10 +454,17 @@
       if (!routesMatchStatus(meta, msg)) return false;
       const s = msg.settings;
       if (!s) return true;
+      const radar = s.radar || {};
+      const metaRadarSsid = meta.radarSsid ?? '';
+      const metaRadarMac = meta.radarMac ?? '';
+      const msgRadarSsid = radar.ssid ?? '';
+      const msgRadarMac = radar.mac ?? radar.bssid ?? '';
       return s.bright === meta.bright &&
         s.timeout === meta.timeout &&
         s.english === meta.english &&
-        (s.display_mode ?? 0) === (meta.displayMode ?? 0);
+        (s.display_mode ?? 0) === (meta.displayMode ?? 0) &&
+        msgRadarSsid === metaRadarSsid &&
+        msgRadarMac.toUpperCase() === metaRadarMac.toUpperCase();
     }
 
     function checkPendingM5Ack(msg) {
@@ -578,12 +630,62 @@
 
     const DISPLAY_MODE_LABELS = ['Auto (IMU)', 'Force Landscape', 'Force Portrait'];
 
+    function getRadarFromUi() {
+      return {
+        ssid: $('radarSsidInput').value.trim(),
+        mac: $('radarMacInput').value.trim().toUpperCase(),
+      };
+    }
+
+    function applyRadarToUi(radar) {
+      if (!radar) return;
+      if (radar.ssid != null) $('radarSsidInput').value = radar.ssid;
+      const mac = radar.mac ?? radar.bssid;
+      if (mac != null) $('radarMacInput').value = mac;
+    }
+
+    function updateRadarLiveLine(msg) {
+      const el = $('radarLiveLine');
+      if (!msg) {
+        el.classList.add('hidden');
+        return;
+      }
+      const radar = msg.settings?.radar || {};
+      const ssid = radar.ssid || '（目前 WiFi）';
+      const mac = radar.mac || radar.bssid || '';
+      if (msg.radar_rssi != null && msg.radar_pct != null) {
+        const ch = msg.radar_channel ? ` · CH ${msg.radar_channel}` : '';
+        el.textContent = `M5 Radar Live：${msg.radar_rssi} dBm · ${msg.radar_pct}%${ch} · ${ssid}${mac ? ` · ${mac}` : ''}`;
+        el.className = 'mb-3 rounded-lg bg-cyan-950/50 px-3 py-2 text-xs text-cyan-300';
+        el.classList.remove('hidden');
+      } else if (radar.ssid || mac) {
+        el.textContent = `M5 Radar 設定：${ssid}${mac ? ` · MAC ${mac}` : ''}（裝置未在 Radar 模式）`;
+        el.className = 'mb-3 rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-400';
+        el.classList.remove('hidden');
+      } else {
+        el.classList.add('hidden');
+      }
+    }
+
     function getSettingsFromUi() {
       return {
         bright: Number($('brightSelect').value),
         timeout: Number($('timeoutSelect').value),
         english: $('languageSelect').value === '1',
         display_mode: Number($('displayModeSelect').value),
+        radar: getRadarFromUi(),
+      };
+    }
+
+    function settingsToDbConfig(settings) {
+      const radar = settings.radar || getRadarFromUi();
+      return {
+        bright: settings.bright,
+        timeout: settings.timeout,
+        english: settings.english,
+        display_mode: settings.display_mode,
+        radarSsid: radar.ssid || '',
+        radarMac: radar.mac || '',
       };
     }
 
@@ -603,6 +705,7 @@
 
     function applyM5StatusToUi(msg) {
       applySettingsToUi(msg?.settings);
+      applyRadarToUi(msg?.settings?.radar);
       if (msg?.wifi_info) {
         applyWifiToUi({
           preset: msg.wifi_info.preset,
@@ -617,10 +720,12 @@
       populateRouteDatalist('B');
       updateBatteryBadge(msg);
       updateWifiStatusLine(msg);
+      updateRadarLiveLine(msg);
     }
 
     function buildAckMeta() {
       const settings = getSettingsFromUi();
+      const radar = getRadarFromUi();
       const live = lastM5Status || {};
       return {
         coA: getCo('A'),
@@ -633,6 +738,8 @@
         timeout: settings.timeout,
         english: settings.english,
         displayMode: settings.display_mode,
+        radarSsid: radar.ssid,
+        radarMac: radar.mac,
       };
     }
 
@@ -644,6 +751,7 @@
       const connected = isTransportConnected();
       $('btnSend').disabled = !connected;
       $('btnSendSettings').disabled = !connected;
+      $('btnSendRadar').disabled = !connected;
       $('btnSendWifi').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
@@ -1228,6 +1336,16 @@
         settings: {
           ...settings,
           wifi: getWifiFromUi(),
+          radar: getRadarFromUi(),
+        },
+      });
+    }
+
+    function buildRadarOnlyJson() {
+      return JSON.stringify({
+        v: 2,
+        settings: {
+          radar: getRadarFromUi(),
         },
       });
     }
@@ -1285,7 +1403,7 @@
       const db = loadDb();
       db.busA = snapshotBus('A');
       db.busB = snapshotBus('B');
-      db.config = { ...db.config, ...settings };
+      db.config = { ...db.config, ...settingsToDbConfig(settings) };
       pushHistory(db);
       saveDb(db);
       log('已儲存設定至本機 DB', 'ok');
@@ -1325,6 +1443,24 @@
       return payload;
     }
 
+    async function sendRadarOnly() {
+      if (!isTransportConnected()) {
+        throw new Error('請先連線雲端 Config');
+      }
+      const radar = getRadarFromUi();
+      log(`Signal Radar：SSID=${radar.ssid || '（目前 WiFi）'}${radar.mac ? ` · MAC ${radar.mac}` : ''}`);
+      const payload = buildRadarOnlyJson();
+      const meta = buildAckMeta();
+      await sendPayloadToM5(payload, meta);
+      const db = loadDb();
+      db.config = { ...db.config, radarSsid: radar.ssid, radarMac: radar.mac };
+      saveDb(db);
+      log('Signal Radar 設定已儲存至本機 DB', 'ok');
+      $('lastPayload').textContent = `→ Radar JSON (${payload.length} bytes)`;
+      $('lastPayload').classList.remove('hidden');
+      return payload;
+    }
+
     async function sendSettingsOnly() {
       if (!isTransportConnected()) {
         throw new Error('請先連線雲端 Config');
@@ -1335,7 +1471,7 @@
       const meta = buildAckMeta();
       await sendPayloadToM5(payload, meta);
       const db = loadDb();
-      db.config = { ...db.config, ...settings };
+      db.config = { ...db.config, ...settingsToDbConfig(settings) };
       saveDb(db);
       log('裝置設定已儲存至本機 DB', 'ok');
       $('lastPayload').textContent = `→ Settings-only JSON (${payload.length} bytes)`;
@@ -1428,6 +1564,33 @@
       populateRouteDatalist('B');
       applyRouteSelection(getRouteB(), {}, 'B').catch((e) => log(`右欄路線載入失敗：${e.message}`, 'err'));
       schedulePersistDb();
+    });
+
+    function switchAppTab(tab) {
+      const isBus = tab === 'bus';
+      $('panelBus').classList.toggle('hidden', !isBus);
+      $('panelRadar').classList.toggle('hidden', isBus);
+      $('tabBus').className = isBus
+        ? 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-emerald-600 text-white'
+        : 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white';
+      $('tabRadar').className = !isBus
+        ? 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-cyan-600 text-white'
+        : 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white';
+    }
+
+    $('tabBus').addEventListener('click', () => switchAppTab('bus'));
+    $('tabRadar').addEventListener('click', () => switchAppTab('radar'));
+
+    $('btnSendRadar').addEventListener('click', async () => {
+      try {
+        await sendRadarOnly();
+      } catch (e) {
+        log(`Radar 發送失敗：${e.message}`, 'err');
+      }
+    });
+
+    ['radarSsidInput', 'radarMacInput'].forEach((id) => {
+      $(id).addEventListener('input', () => schedulePersistDb());
     });
 
     $('btnCloudConnect').addEventListener('click', () => {
@@ -1548,6 +1711,7 @@
         $('wifiSsidInput').value = db.config.wifiCustomSsid;
       }
       toggleWifiCustomFields();
+      applyRadarToUi({ ssid: db.config.radarSsid, mac: db.config.radarMac });
       if (db.busA?.co) $('coSelectA').value = db.busA.co;
       if (db.busB?.co) $('coSelectB').value = db.busB.co;
       const ok = await loadAllRoutes();
