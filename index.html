@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>M5 Bus Controller v6</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
+  <script>tailwind.config={darkMode:'class',theme:{extend:{colors:{surface:{DEFAULT:'#0f172a',card:'#1e293b',border:'#334155'}}}}};</script>
+  <style>
+    html{color-scheme:dark}body{-webkit-tap-highlight-color:transparent}
+    .status-dot{box-shadow:0 0 8px currentColor}
+    #toast{transition:opacity .3s,transform .3s}
+    #toast.hidden{opacity:0;transform:translateY(12px);pointer-events:none}
+  </style>
+</head>
+<body class="bg-surface text-slate-100 min-h-screen pb-20">
+  <div id="toast" class="fixed bottom-20 left-1/2 z-50 hidden -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm shadow-lg border border-slate-600"></div>
+
+  <header class="sticky top-0 z-30 border-b border-surface-border bg-surface/95 backdrop-blur px-4 py-3">
+    <div class="flex items-center justify-between gap-2">
+      <div>
+        <h1 class="text-lg font-bold" data-i18n="title">M5 Bus Controller</h1>
+        <p class="text-xs text-slate-400" data-i18n="subtitle">v6.0 CRM · Bus · RSSI · Stock · Weather</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <select id="langSelect" class="rounded border border-surface-border bg-slate-900 px-2 py-1 text-xs">
+          <option value="zh">繁體中文</option><option value="en">English</option>
+        </select>
+        <span id="liveBadge" class="inline-flex items-center gap-1 rounded-full border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-500">
+          <span id="liveDot" class="h-2 w-2 rounded-full bg-slate-600"></span><span id="liveText">Offline</span>
+        </span>
+        <span id="batteryBadge" class="hidden items-center gap-1 rounded-full border border-slate-600 bg-slate-900 px-2 py-1 text-xs">
+          <span id="batteryIcon">🔋</span><span id="batteryPct">--%</span>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-lg space-y-4 p-4">
+    <section class="rounded-xl border border-surface-border bg-surface-card p-4">
+      <h2 class="mb-2 text-sm font-semibold text-amber-400" data-i18n="mqttTitle">MQTT 雲端配對</h2>
+      <div class="mb-2 flex items-center gap-2 text-xs">
+        <span id="cloudDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
+        <span id="cloudLabel" class="text-slate-500" data-i18n="disconnected">未連線</span>
+      </div>
+      <label class="text-xs text-slate-400" data-i18n="deviceId">Device ID</label>
+      <input id="deviceId" class="mb-2 w-full rounded-lg border border-surface-border bg-slate-900 px-3 py-2 font-mono text-sm uppercase" maxlength="12" placeholder="AABBCCDDEEFF" />
+      <button id="btnConnect" class="w-full rounded-lg bg-amber-600 py-2.5 text-sm font-semibold" data-i18n="connect">☁ 連線 MQTT</button>
+      <p class="mt-2 text-xs text-slate-500">Topic: m5bus_&lt;ID&gt;/config · state · weather · stock</p>
+    </section>
+
+    <nav class="flex gap-1 overflow-x-auto rounded-xl border border-surface-border bg-surface-card p-1 text-xs">
+      <button class="tab flex-1 rounded-lg bg-amber-600 py-2 font-semibold" data-tab="bus" data-i18n="tabBus">🚌 Bus</button>
+      <button class="tab flex-1 rounded-lg py-2 text-slate-400" data-tab="rssi" data-i18n="tabRssi">📡 RSSI</button>
+      <button class="tab flex-1 rounded-lg py-2 text-slate-400" data-tab="stock" data-i18n="tabStock">📈 Stock</button>
+      <button class="tab flex-1 rounded-lg py-2 text-slate-400" data-tab="weather" data-i18n="tabWeather">🌤 Weather</button>
+      <button class="tab flex-1 rounded-lg py-2 text-slate-400" data-tab="settings" data-i18n="tabSettings">⚙ Settings</button>
+    </nav>
+
+    <!-- BUS -->
+    <div id="panel-bus" class="panel space-y-4">
+      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
+        <div class="mb-2 flex justify-between"><h3 class="text-sm font-semibold" data-i18n="busProfiles">4-Profile Bus ETA</h3><span id="profileBadge" class="text-xs text-amber-300">P1</span></div>
+        <div class="mb-2 flex gap-1" id="profileTabs"></div>
+        <input id="profileName" class="mb-2 w-full rounded border border-surface-border bg-slate-900 px-2 py-1 text-sm" data-i18n-placeholder="profileName" placeholder="Profile 名稱" />
+        <div class="space-y-3">
+          <div class="rounded border border-slate-700 p-2">
+            <p class="mb-1 text-xs text-cyan-300" data-i18n="colA">左欄 A</p>
+            <select id="coA" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm"><option value="KMB">KMB</option><option value="CTB">CTB</option></select>
+            <input id="routeA" list="routesA" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm" placeholder="Route" />
+            <datalist id="routesA"></datalist>
+            <select id="variantA" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm" disabled><option>—</option></select>
+            <select id="stopA" class="w-full rounded bg-slate-900 px-2 py-1 text-sm" disabled><option>—</option></select>
+          </div>
+          <div class="rounded border border-slate-700 p-2">
+            <p class="mb-1 text-xs text-cyan-300" data-i18n="colB">右欄 B</p>
+            <select id="coB" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm"><option value="KMB">KMB</option><option value="CTB">CTB</option></select>
+            <input id="routeB" list="routesB" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm" placeholder="Route" />
+            <datalist id="routesB"></datalist>
+            <select id="variantB" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm" disabled><option>—</option></select>
+            <select id="stopB" class="w-full rounded bg-slate-900 px-2 py-1 text-sm" disabled><option>—</option></select>
+          </div>
+        </div>
+        <button id="btnSyncRoutes" class="mt-2 text-xs text-amber-400" data-i18n="syncRoutes">🔄 同步路線</button>
+        <button id="btnSendBus" class="mt-3 w-full rounded-lg bg-amber-600 py-2 text-sm font-semibold" data-i18n="sendBus">📡 發送 Bus 設定</button>
+      </section>
+    </div>
+
+    <!-- RSSI -->
+    <div id="panel-rssi" class="panel hidden space-y-4">
+      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
+        <h3 class="mb-2 text-sm font-semibold" data-i18n="rssiTitle">RSSI Monitor</h3>
+        <p id="rssiLive" class="mb-2 hidden rounded bg-cyan-950/50 px-2 py-1 text-xs text-cyan-300"></p>
+        <select id="appMode" class="mb-2 w-full rounded bg-slate-900 px-2 py-2 text-sm">
+          <option value="bus">Bus ETA</option><option value="rssi">RSSI Radar</option>
+          <option value="stock">Stock</option><option value="weather">Weather</option>
+        </select>
+        <input id="radarSsid" class="mb-2 w-full rounded bg-slate-900 px-2 py-2 text-sm" placeholder="Scan SSID (blank=current)" />
+        <input id="radarMac" class="mb-2 w-full rounded bg-slate-900 px-2 py-2 font-mono text-sm" placeholder="BSSID AA:BB:CC:DD:EE:FF" />
+        <button id="btnScanWifi" class="mb-2 w-full rounded bg-slate-800 py-2 text-xs">📡 M5 WiFi Scan</button>
+        <select id="scanResults" class="mb-2 w-full rounded bg-slate-900 px-2 py-2 text-sm" disabled><option>— scan —</option></select>
+        <button id="btnSendRssi" class="w-full rounded-lg bg-cyan-700 py-2 text-sm font-semibold" data-i18n="sendRssi">📡 發送 RSSI 設定</button>
+      </section>
+    </div>
+
+    <!-- STOCK -->
+    <div id="panel-stock" class="panel hidden space-y-4">
+      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
+        <h3 class="mb-2 text-sm font-semibold" data-i18n="stockTitle">Stock Watchlist ETL</h3>
+        <div id="stockSlots" class="space-y-2"></div>
+        <button id="btnFetchStock" class="mt-2 w-full rounded-lg bg-emerald-700 py-2 text-sm font-semibold" data-i18n="fetchStock">📈 抓取並推送</button>
+        <label class="mt-2 flex items-center gap-2 text-xs"><input id="stockAuto" type="checkbox" /> <span data-i18n="autoStock">Auto 60s</span></label>
+        <pre id="stockPreview" class="mt-2 max-h-32 overflow-auto rounded bg-slate-900 p-2 text-xs text-slate-400">—</pre>
+      </section>
+    </div>
+
+    <!-- WEATHER -->
+    <div id="panel-weather" class="panel hidden space-y-4">
+      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
+        <h3 class="mb-2 text-sm font-semibold" data-i18n="weatherTitle">HKO Weather ETL</h3>
+        <p class="mb-2 text-xs text-slate-400" data-i18n="weatherDesc">rhrread + fnd → m5bus_&lt;ID&gt;/weather (retain: false)</p>
+        <button id="btnFetchWeather" class="w-full rounded-lg bg-sky-700 py-2 text-sm font-semibold" data-i18n="fetchWeather">🌤 抓取 HKO 並推送</button>
+        <label class="mt-2 flex items-center gap-2 text-xs"><input id="weatherAuto" type="checkbox" checked /> <span data-i18n="autoWeather">Auto 30s</span></label>
+        <pre id="weatherPreview" class="mt-2 max-h-40 overflow-auto rounded bg-slate-900 p-2 text-xs text-slate-400">—</pre>
+      </section>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="panel-settings" class="panel hidden space-y-4">
+      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
+        <h3 class="mb-2 text-sm font-semibold" data-i18n="settingsTitle">裝置設定</h3>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div><label class="text-xs text-slate-400" data-i18n="bright">亮度</label>
+            <select id="bright" class="w-full rounded bg-slate-900 px-2 py-1"><option value="0">25%</option><option value="1" selected>50%</option><option value="2">75%</option><option value="3">100%</option></select></div>
+          <div><label class="text-xs text-slate-400" data-i18n="timeout">逾時</label>
+            <select id="timeout" class="w-full rounded bg-slate-900 px-2 py-1"><option value="0">15s</option><option value="1" selected>30s</option><option value="2">60s</option><option value="3" data-i18n="never">永不</option></select></div>
+          <div><label class="text-xs text-slate-400" data-i18n="lang">語言</label>
+            <select id="m5lang" class="w-full rounded bg-slate-900 px-2 py-1"><option value="0">中文</option><option value="1">English</option></select></div>
+        </div>
+        <div class="mt-3 space-y-2">
+          <label class="text-xs text-slate-400" data-i18n="wifiSsid">WiFi SSID</label>
+          <input id="wifiSsid" class="w-full rounded bg-slate-900 px-2 py-2 text-sm" />
+          <label class="text-xs text-slate-400" data-i18n="wifiPass">WiFi 密碼</label>
+          <input id="wifiPass" type="password" class="w-full rounded bg-slate-900 px-2 py-2 text-sm" />
+          <button id="btnSendWifi" class="w-full rounded bg-emerald-700 py-2 text-sm" data-i18n="sendWifi">📶 發送 WiFi</button>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button id="btnRefreshEta" class="rounded bg-slate-800 px-3 py-2 text-xs" data-i18n="refreshEta">⟳ 刷新 ETA</button>
+          <button id="btnReboot" class="rounded bg-slate-800 px-3 py-2 text-xs" data-i18n="reboot">↻ 重啟</button>
+        </div>
+        <button id="btnSendSettings" class="mt-3 w-full rounded border border-amber-600/50 py-2 text-sm" data-i18n="sendSettings">僅發送設定</button>
+      </section>
+    </div>
+
+    <section class="rounded-xl border border-surface-border bg-surface-card p-4">
+      <h3 class="mb-2 text-sm font-semibold" data-i18n="logTitle">同步記錄</h3>
+      <div id="log" class="max-h-40 space-y-1 overflow-y-auto text-xs"><p class="text-slate-500" data-i18n="logWait">— 等待操作 —</p></div>
+    </section>
+  </main>
+
+<script>
+(function(){
+'use strict';
+
+const I18N = {
+  zh: {
+    title:'M5 Bus Controller', subtitle:'v6.0 CRM · 巴士 · RSSI · 股票 · 天氣',
+    mqttTitle:'MQTT 雲端配對', disconnected:'未連線', connected:'已連線', deviceId:'Device ID', connect:'☁ 連線 MQTT', disconnect:'🔴 中斷',
+    tabBus:'🚌 Bus', tabRssi:'📡 RSSI', tabStock:'📈 Stock', tabWeather:'🌤 Weather', tabSettings:'⚙ 設定',
+    busProfiles:'4-Profile Bus ETA', profileName:'Profile 名稱', colA:'左欄 A', colB:'右欄 B',
+    syncRoutes:'🔄 同步路線', sendBus:'📡 發送 Bus 設定',
+    rssiTitle:'RSSI Monitor', sendRssi:'📡 發送 RSSI 設定',
+    stockTitle:'Stock Watchlist ETL', fetchStock:'📈 抓取並推送', autoStock:'自動 60 秒',
+    weatherTitle:'HKO Weather ETL', weatherDesc:'rhrread + fnd → weather (retain: false)', fetchWeather:'🌤 抓取 HKO 並推送', autoWeather:'自動 30 秒',
+    settingsTitle:'裝置設定', bright:'亮度', timeout:'逾時', never:'永不', lang:'語言',
+    wifiSsid:'WiFi SSID', wifiPass:'WiFi 密碼', sendWifi:'📶 發送 WiFi',
+    refreshEta:'⟳ 刷新 ETA', reboot:'↻ 重啟', sendSettings:'僅發送設定',
+    logTitle:'同步記錄', logWait:'— 等待操作 —'
+  },
+  en: {
+    title:'M5 Bus Controller', subtitle:'v6.0 CRM · Bus · RSSI · Stock · Weather',
+    mqttTitle:'MQTT Cloud Pairing', disconnected:'Disconnected', connected:'Connected', deviceId:'Device ID', connect:'☁ Connect MQTT', disconnect:'🔴 Disconnect',
+    tabBus:'🚌 Bus', tabRssi:'📡 RSSI', tabStock:'📈 Stock', tabWeather:'🌤 Weather', tabSettings:'⚙ Settings',
+    busProfiles:'4-Profile Bus ETA', profileName:'Profile name', colA:'Column A', colB:'Column B',
+    syncRoutes:'🔄 Sync routes', sendBus:'📡 Send Bus config',
+    rssiTitle:'RSSI Monitor', sendRssi:'📡 Send RSSI config',
+    stockTitle:'Stock Watchlist ETL', fetchStock:'📈 Fetch & push', autoStock:'Auto 60s',
+    weatherTitle:'HKO Weather ETL', weatherDesc:'rhrread + fnd → weather (retain: false)', fetchWeather:'🌤 Fetch HKO & push', autoWeather:'Auto 30s',
+    settingsTitle:'Device settings', bright:'Brightness', timeout:'Timeout', never:'Never', lang:'Language',
+    wifiSsid:'WiFi SSID', wifiPass:'WiFi password', sendWifi:'📶 Send WiFi',
+    refreshEta:'⟳ Refresh ETA', reboot:'↻ Reboot', sendSettings:'Send settings only',
+    logTitle:'Sync log', logWait:'— Waiting —'
+  }
+};
+
+let lang = localStorage.getItem('m5-lang') || 'zh';
+const $ = id => document.getElementById(id);
+const t = k => (I18N[lang] && I18N[lang][k]) || I18N.zh[k] || k;
+
+function applyI18n() {
+  document.documentElement.lang = lang === 'en' ? 'en' : 'zh-Hant';
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  $('langSelect').value = lang;
+}
+
+function toast(msg, type='info') {
+  const el = $('toast');
+  const colors = {info:'border-slate-600', ok:'border-emerald-500 text-emerald-300', err:'border-red-500 text-red-300'};
+  el.className = `fixed bottom-20 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm shadow-lg border ${colors[type]||colors.info}`;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.add('hidden'), 2800);
+}
+
+function log(msg, type='info') {
+  const el = $('log');
+  const colors = {info:'text-slate-400', ok:'text-emerald-400', err:'text-red-400', warn:'text-amber-400'};
+  const line = document.createElement('p');
+  line.className = colors[type]||colors.info;
+  const time = new Date().toLocaleTimeString(lang==='en'?'en-GB':'zh-HK',{hour12:false});
+  line.textContent = `[${time}] ${msg}`;
+  if (el.firstChild?.textContent?.includes('等待')||el.firstChild?.textContent?.includes('Waiting')) el.innerHTML='';
+  el.prepend(line);
+  while (el.children.length > 30) el.removeChild(el.lastChild);
+}
+
+const MQTT_WS = 'wss://broker.hivemq.com:8884/mqtt';
+const KMB = 'https://data.etabus.gov.hk/v1/transport/kmb';
+const CTB = 'https://rt.data.gov.hk/v2/transport/citybus';
+const HKO = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php';
+const PROFILE_COUNT = 4;
+const STOCK_SLOTS = 4;
+const DB_KEY = 'm5-v6-db';
+const DEVICE_KEY = 'm5-device-id';
+
+let mqttClient = null, connected = false, lastStatus = null, lastStatusMs = 0;
+let uiProfile = 0, kmbRoutes = [], ctbRoutes = [], kmbNums = [], ctbNums = [], ctbStops = null;
+let liveWifiNetworks = [];
+
+function getId() { return ($('deviceId').value||'').trim().toUpperCase().replace(/[^0-9A-F]/g,''); }
+function topic(suffix) { return `m5bus_${getId()}/${suffix}`; }
+
+function translateAndShortenName(rawText) {
+  if (!rawText) return '';
+  let s = String(rawText).trim();
+  s = s.replace(/(公共運輸交匯處|巴士總站|轉車站|特別班次)$/g, '');
+  s = s.replace(/(Public Transport Interchange|Bus Terminus|Station)$/gi, '');
+  s = s.replace(/\s+/g, '');
+  const units = [...s];
+  if (units.length > 5) s = units.slice(0, 5).join('');
+  return s;
+}
+
+function defaultDb() {
+  const profiles = Array.from({length:PROFILE_COUNT}, (_,i) => ({
+    name: lang==='en'?['Commute','Return','Holiday','Nearby'][i]:['返工','放工','假日','屋企'][i],
+    busA:{co:'KMB',route:i===0?'76K':'',stopId:i===0?'68C988CE5394BAE7':'',bound:'O',svc:'1',stopName:i===0?(lang==='en'?'Long Ping':'朗屏'):''},
+    busB:{co:'KMB',route:i===0?'76K':'',stopId:i===0?'B0D79D5CE512B9EC':'',bound:'I',svc:'1',stopName:i===0?(lang==='en'?'Sheung Shui':'上水'):''}
+  }));
+  return {v:6, activeProfile:0, profiles, stocks:[
+    {symbol:'0700.HK',name:'Tencent'},{symbol:'0941.HK',name:'China Mobile'},
+    {symbol:'1299.HK',name:'AIA'},{symbol:'0388.HK',name:'HKEX'}
+  ], config:{bright:1,timeout:1,english:false,wifiSsid:'',wifiPass:''}};
+}
+
+function loadDb() {
+  try { const d = JSON.parse(localStorage.getItem(DB_KEY)||'null'); if (d) return {...defaultDb(),...d, profiles:d.profiles||defaultDb().profiles}; } catch{}
+  return defaultDb();
+}
+function saveDb(db) { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+
+function busFw(b) { return {co:b.co||'KMB',route:b.route||'',stop:b.stopId||b.stop||'',svc:b.svc||b.serviceType||'1',bound:b.bound||'O',name:translateAndShortenName(b.stopName||b.name||'')}; }
+
+function buildConfigPayload() {
+  const db = loadDb();
+  const p = db.profiles[uiProfile] || db.profiles[0];
+  return {
+    v:6, active_profile: db.activeProfile??0, active_stock:0,
+    profiles: db.profiles.map((pr,i) => ({id:i,name:pr.name,busA:busFw(pr.busA),busB:busFw(pr.busB)})),
+    busA:busFw(p.busA), busB:busFw(p.busB),
+    settings:{
+      bright:Number($('bright').value), timeout:Number($('timeout').value),
+      english:$('m5lang').value==='1', app_mode:$('appMode').value,
+      wifi:{ssid:$('wifiSsid').value.trim(),password:$('wifiPass').value},
+      radar:{ssid:$('radarSsid').value.trim(),mac:$('radarMac').value.trim().toUpperCase()},
+      stocks: db.stocks
+    }
+  };
+}
+
+function setCloud(on, detail='') {
+  connected = on && !!mqttClient;
+  $('cloudDot').className = on ? 'status-dot h-2.5 w-2.5 rounded-full bg-emerald-400' : 'status-dot h-2.5 w-2.5 rounded-full bg-slate-600';
+  $('cloudLabel').textContent = on ? (detail||t('connected')) : t('disconnected');
+  $('cloudLabel').className = on ? 'text-emerald-400' : 'text-slate-500';
+  $('btnConnect').textContent = on ? t('disconnect') : t('connect');
+  document.querySelectorAll('button:not(#btnConnect)').forEach(b => { if (!on) b.disabled = true; else b.disabled = false; });
+}
+
+function setLive(on, detail='') {
+  const b = $('liveBadge');
+  if (on) {
+    b.className = 'inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950 px-2 py-1 text-xs text-emerald-300';
+    $('liveDot').className = 'status-dot h-2 w-2 rounded-full bg-emerald-400';
+    $('liveText').textContent = detail ? `Live · ${detail}` : 'Live';
+  } else {
+    b.className = 'inline-flex items-center gap-1 rounded-full border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-500';
+    $('liveDot').className = 'h-2 w-2 rounded-full bg-slate-600';
+    $('liveText').textContent = 'Offline';
+  }
+}
+
+function disconnect() {
+  if (mqttClient) { try{mqttClient.end(true);}catch{} mqttClient=null; }
+  if (weatherTimer) { clearInterval(weatherTimer); weatherTimer=null; }
+  if (stockTimer) { clearInterval(stockTimer); stockTimer=null; }
+  setCloud(false); setLive(false);
+  log('Disconnected','warn');
+}
+
+function connect() {
+  const id = getId();
+  if (id.length < 8) throw new Error(lang==='en'?'Enter Device ID':'請輸入 Device ID');
+  localStorage.setItem(DEVICE_KEY, id);
+  if (mqttClient) disconnect();
+  mqttClient = mqtt.connect(MQTT_WS, {clientId:`web-${id}-${Math.random().toString(36).slice(2,8)}`,clean:true,reconnectPeriod:4000});
+  mqttClient.on('connect', () => {
+    setCloud(true,'HiveMQ');
+    mqttClient.subscribe([topic('state'), topic('wifi_scan')], {qos:0});
+    log('MQTT connected','ok'); toast(t('connected'),'ok');
+    startAutoSync();
+  });
+  mqttClient.on('message', (tpc, buf) => {
+    if (tpc.endsWith('/wifi_scan')) {
+      try {
+        const msg = JSON.parse(buf.toString());
+        liveWifiNetworks = msg.networks || [];
+        const sel = $('scanResults'); sel.innerHTML='';
+        liveWifiNetworks.forEach((n,i) => { const o=document.createElement('option'); o.value=String(i); o.textContent=`${n.ssid} (${n.rssi}dBm)`; sel.appendChild(o); });
+        sel.disabled = !liveWifiNetworks.length;
+      } catch{}
+      return;
+    }
+    if (!tpc.endsWith('/state')) return;
+    try {
+      lastStatus = JSON.parse(buf.toString());
+      lastStatusMs = Date.now();
+      if (lastStatus.settings) {
+        if (lastStatus.settings.bright!=null) $('bright').value = String(lastStatus.settings.bright);
+        if (lastStatus.settings.timeout!=null) $('timeout').value = String(lastStatus.settings.timeout);
+        if (lastStatus.settings.english!=null) $('m5lang').value = lastStatus.settings.english?'1':'0';
+        if (lastStatus.settings.app_mode) $('appMode').value = lastStatus.settings.app_mode;
+      }
+      const pct = lastStatus.battery;
+      const bb = $('batteryBadge');
+      if (pct!=null && pct>=0) { bb.classList.remove('hidden'); bb.classList.add('inline-flex'); $('batteryPct').textContent=`${pct}%`; }
+      if (lastStatus.radar_rssi!=null) {
+        $('rssiLive').classList.remove('hidden');
+        $('rssiLive').textContent = `RSSI ${lastStatus.radar_rssi} dBm · ${lastStatus.radar_pct}%`;
+      }
+      setLive(true, lastStatus.device||id);
+    } catch { setLive(true,id); }
+  });
+  mqttClient.on('close', () => { setCloud(false); setLive(false); });
+  mqttClient.on('error', e => log(e.message,'err'));
+}
+
+function pubConfig() {
+  return new Promise((res,rej) => {
+    const payload = JSON.stringify(buildConfigPayload());
+    mqttClient.publish(topic('config'), payload, {qos:0, retain:true}, e => e?rej(e):res());
+  });
+}
+
+function pubCmd(action) {
+  return new Promise((res,rej) => {
+    mqttClient.publish(topic('cmd'), JSON.stringify({action,seq:Date.now()}), {qos:0, retain:false}, e => e?rej(e):res());
+  });
+}
+
+function pubJson(suffix, obj) {
+  return new Promise((res,rej) => {
+    mqttClient.publish(topic(suffix), JSON.stringify(obj), {qos:0, retain:false}, e => e?rej(e):res());
+  });
+}
+
+async function fetchHko(dataType) {
+  const r = await fetch(`${HKO}?dataType=${dataType}&lang=${lang==='en'?'en':'tc'}`);
+  if (!r.ok) throw new Error(`HKO ${dataType} ${r.status}`);
+  return r.json();
+}
+
+async function buildWeather() {
+  const [rhr, fnd] = await Promise.all([fetchHko('rhrread'), fetchHko('fnd')]);
+  const warnings = [];
+  if (Array.isArray(rhr.warnsum)) {
+    for (const w of rhr.warnsum) warnings.push({code:w.code,name:translateAndShortenName(w.name||w.code),action:w.actionCode||'issue'});
+  } else if (rhr.warningMessage) {
+    warnings.push({code:'WARN',name:translateAndShortenName(String(rhr.warningMessage).split('\n')[0]),action:'issue'});
+  }
+  const temps = rhr.temperature?.data||[];
+  const hums = rhr.humidity?.data||[];
+  const forecast = (fnd.weatherForecast||[]).slice(0,9).map(d => ({
+    date: d.forecastDate ? `${d.forecastDate.slice(6,8)}/${d.forecastDate.slice(4,6)}` : '',
+    week: d.week||'',
+    min: Number(d.forecastMintemp?.value??d.forecastMintemp??0),
+    max: Number(d.forecastMaxtemp?.value??d.forecastMaxtemp??0),
+    psr: Number(d.PSR??d.psr??0),
+    desc: translateAndShortenName(d.forecastWeather||'')
+  }));
+  return {
+    v:1, updated:new Date().toISOString(),
+    current:{temp:Number(temps[0]?.value??0), humidity:Number(hums[0]?.value??0), icon:Number(Array.isArray(rhr.icon)?rhr.icon[0]:50)},
+    warnings, forecast
+  };
+}
+
+async function pushWeather() {
+  if (!connected) throw new Error('MQTT not connected');
+  const payload = await buildWeather();
+  $('weatherPreview').textContent = JSON.stringify(payload,null,2);
+  await pubJson('weather', payload);
+  log(lang==='en'?'Weather pushed':'天氣已推送','ok');
+  toast(lang==='en'?'Weather sent':'天氣已發送','ok');
+}
+
+async function buildStock(symbol, name) {
+  const sym = symbol||'0700.HK';
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=5m&range=1d`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Stock ${r.status}`);
+  const j = await r.json();
+  const meta = j.chart?.result?.[0]?.meta||{};
+  const closes = (j.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[]).filter(v=>v!=null);
+  const price = meta.regularMarketPrice ?? closes.at(-1) ?? 0;
+  const prev = meta.chartPreviousClose ?? meta.previousClose ?? price;
+  const change = price - prev;
+  return {v:1,updated:new Date().toISOString(),symbol:sym,name:name||meta.shortName||sym,
+    price:Number(price),change:Number(change),changePct:prev?(change/prev*100):0,
+    prevClose:Number(prev),history:closes.slice(-48)};
+}
+
+async function pushStock() {
+  if (!connected) throw new Error('MQTT not connected');
+  const db = loadDb();
+  const slot = db.stocks[0]||{symbol:'0700.HK',name:'Tencent'};
+  const payload = await buildStock(slot.symbol, slot.name);
+  $('stockPreview').textContent = JSON.stringify(payload,null,2);
+  await pubJson('stock', payload);
+  log(lang==='en'?'Stock pushed':'股票已推送','ok');
+  toast(lang==='en'?'Stock sent':'股票已發送','ok');
+}
+
+function startAutoSync() {
+  if (weatherTimer) clearInterval(weatherTimer);
+  if (stockTimer) clearInterval(stockTimer);
+  if ($('weatherAuto').checked) weatherTimer = setInterval(() => pushWeather().catch(e=>log(e.message,'err')), 30000);
+  if ($('stockAuto').checked) stockTimer = setInterval(() => pushStock().catch(e=>log(e.message,'err')), 60000);
+}
+
+// Route helpers
+function getCo(side) { return $(side==='B'?'coB':'coA').value==='CTB'?'CTB':'KMB'; }
+function getRoute(side) { return $(side==='B'?'routeB':'routeA').value.trim().toUpperCase(); }
+function routes(co) { return co==='CTB'?ctbRoutes:kmbRoutes; }
+function routeNums(co) { return co==='CTB'?ctbNums:kmbNums; }
+
+function populateRoutes() {
+  ['A','B'].forEach(s => {
+    const list = $(s==='B'?'routesB':'routesA');
+    list.innerHTML = '';
+    routeNums(getCo(s)).forEach(r => { const o=document.createElement('option'); o.value=r; list.appendChild(o); });
+  });
+}
+
+async function syncRoutes() {
+  const [k,c] = await Promise.all([fetch(`${KMB}/route/`), fetch(`${CTB}/route/CTB`)]);
+  kmbRoutes = (await k.json()).data||[];
+  ctbRoutes = (await c.json()).data||[];
+  kmbNums = [...new Set(kmbRoutes.map(r=>r.route))].sort();
+  ctbNums = [...new Set(ctbRoutes.map(r=>r.route))].sort();
+  populateRoutes();
+  log(lang==='en'?'Routes synced':'路線已同步','ok');
+}
+
+function variants(route, side) { return routes(getCo(side)).filter(v=>v.route===route); }
+
+async function loadStops(side) {
+  const route = getRoute(side);
+  const sel = $(side==='B'?'variantB':'variantA');
+  const idx = sel.value;
+  if (idx==='') return;
+  const v = variants(route, side)[Number(idx)];
+  const stopSel = $(side==='B'?'stopB':'stopA');
+  stopSel.innerHTML='<option>Loading…</option>'; stopSel.disabled=true;
+  let stops=[];
+  if (getCo(side)==='CTB') {
+    if (!ctbStops) { const r=await fetch(`${CTB}/route-stop/CTB`); ctbStops=(await r.json()).data||[]; }
+    stops = ctbStops.filter(s=>s.route===route&&s.bound===v.bound&&String(s.service_type)===String(v.service_type));
+  } else {
+    const path = v.bound==='I'?'inbound':'outbound';
+    const r = await fetch(`${KMB}/route-stop/${route}/${path}/${v.service_type}`);
+    stops = (await r.json()).data||[];
+  }
+  stopSel.innerHTML='';
+  stops.forEach((s,i)=>{ const o=document.createElement('option'); o.value=s.stop||s.stop_id; o.textContent=`${i+1}. ${translateAndShortenName(s.name_tc||s.name_en||'')}`; stopSel.appendChild(o); });
+  stopSel.disabled = !stops.length;
+}
+
+function populateVariants(route, side, bound='O', svc='1') {
+  const sel = $(side==='B'?'variantB':'variantA');
+  const vars = variants(route, side);
+  sel.innerHTML='';
+  if (!vars.length) { sel.disabled=true; return; }
+  let def=0;
+  vars.forEach((v,i)=>{ const o=document.createElement('option'); o.value=String(i); o.textContent=`${v.orig_tc}→${v.dest_tc} (${v.service_type})`; sel.appendChild(o); if(v.bound===bound&&v.service_type===svc) def=i; });
+  sel.disabled=false; sel.value=String(def);
+}
+
+function snapshot(side) {
+  const stopSel = $(side==='B'?'stopB':'stopA');
+  const varSel = $(side==='B'?'variantB':'variantA');
+  const v = variants(getRoute(side), side)[Number(varSel.value)]||{};
+  return {co:getCo(side),route:getRoute(side),stopId:stopSel.value,bound:v.bound||(side==='B'?'I':'O'),svc:v.service_type||'1',stopName:stopSel.selectedOptions[0]?.textContent?.replace(/^\d+\.\s*/,'')||''};
+}
+
+function saveProfileToDb() {
+  const db = loadDb();
+  db.profiles[uiProfile] = {name:$('profileName').value.trim()||db.profiles[uiProfile].name, busA:snapshot('A'), busB:snapshot('B')};
+  saveDb(db);
+}
+
+function initProfileTabs() {
+  const tabs = $('profileTabs');
+  tabs.innerHTML='';
+  for (let i=0;i<PROFILE_COUNT;i++) {
+    const b=document.createElement('button');
+    b.className=`flex-1 rounded py-1 text-xs ${i===uiProfile?'bg-amber-600 text-white':'text-slate-400'}`;
+    b.textContent=`P${i+1}`;
+    b.onclick=()=>{ saveProfileToDb(); uiProfile=i; loadProfileUi(); initProfileTabs(); };
+    tabs.appendChild(b);
+  }
+}
+
+function loadProfileUi() {
+  const db = loadDb();
+  const p = db.profiles[uiProfile];
+  $('profileName').value = p.name||'';
+  $('profileBadge').textContent = `P${uiProfile+1}`;
+  $('coA').value = p.busA.co||'KMB'; $('coB').value = p.busB.co||'KMB';
+  $('routeA').value = p.busA.route||''; $('routeB').value = p.busB.route||'';
+}
+
+function initStockSlots() {
+  const db = loadDb();
+  const wrap = $('stockSlots');
+  wrap.innerHTML='';
+  db.stocks.forEach((s,i) => {
+    const row = document.createElement('div');
+    row.className='flex gap-2';
+    row.innerHTML=`<input data-si="${i}" data-f="symbol" class="flex-1 rounded bg-slate-900 px-2 py-1 text-sm" value="${s.symbol||''}" />
+      <input data-si="${i}" data-f="name" class="flex-1 rounded bg-slate-900 px-2 py-1 text-sm" value="${s.name||''}" />`;
+    wrap.appendChild(row);
+  });
+  wrap.querySelectorAll('input').forEach(inp => inp.addEventListener('change', () => {
+    const db=loadDb(); const i=Number(inp.dataset.si); db.stocks[i][inp.dataset.f]=inp.value; saveDb(db);
+  }));
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));
+  $('panel-'+name).classList.remove('hidden');
+  document.querySelectorAll('.tab').forEach(b=>{
+    b.className = b.dataset.tab===name ? 'tab flex-1 rounded-lg bg-amber-600 py-2 font-semibold text-xs' : 'tab flex-1 rounded-lg py-2 text-xs text-slate-400';
+  });
+}
+
+function parseUrlId() {
+  const id = (new URLSearchParams(location.search).get('id')||'').trim().toUpperCase().replace(/[^0-9A-F]/g,'');
+  if (id.length>=8) { $('deviceId').value=id; localStorage.setItem(DEVICE_KEY,id); return id; }
+  const saved = localStorage.getItem(DEVICE_KEY);
+  if (saved) $('deviceId').value=saved;
+  return saved||'';
+}
+
+function bindEvents() {
+  $('langSelect').onchange = () => { lang=$('langSelect').value; localStorage.setItem('m5-lang',lang); applyI18n(); };
+  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+  $('btnConnect').onclick = () => { try { connected?disconnect():connect(); } catch(e){log(e.message,'err');toast(e.message,'err');} };
+  $('btnSyncRoutes').onclick = () => syncRoutes().catch(e=>log(e.message,'err'));
+  ['A','B'].forEach(s => {
+    $(s==='B'?'routeB':'routeA').onchange = async () => { populateVariants(getRoute(s),s); await loadStops(s); };
+    $(s==='B'?'variantB':'variantA').onchange = () => loadStops(s);
+  });
+  $('btnSendBus').onclick = async () => { saveProfileToDb(); try{await pubConfig();log('Bus config sent','ok');toast('OK','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendRssi').onclick = async () => { try{await pubConfig();log('RSSI config sent','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendWifi').onclick = async () => { try{await pubConfig();log('WiFi sent','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendSettings').onclick = async () => { try{await pubConfig();log('Settings sent','ok');}catch(e){log(e.message,'err');} };
+  $('btnFetchWeather').onclick = () => pushWeather().catch(e=>{log(e.message,'err');toast(e.message,'err');});
+  $('btnFetchStock').onclick = () => pushStock().catch(e=>{log(e.message,'err');toast(e.message,'err');});
+  $('weatherAuto').onchange = startAutoSync;
+  $('stockAuto').onchange = startAutoSync;
+  $('btnRefreshEta').onclick = () => pubCmd('refresh_eta').then(()=>log('ETA refresh','ok')).catch(e=>log(e.message,'err'));
+  $('btnReboot').onclick = () => pubCmd('reboot').then(()=>log('Reboot sent','ok')).catch(e=>log(e.message,'err'));
+  $('btnScanWifi').onclick = () => pubCmd('scan_wifi').then(()=>log('Scan requested','ok')).catch(e=>log(e.message,'err'));
+  $('scanResults').onchange = () => {
+    const n = liveWifiNetworks[Number($('scanResults').value)];
+    if (!n) return;
+    $('radarSsid').value = n.ssid || '';
+    $('radarMac').value = (n.bssid || '').toUpperCase();
+  };
+}
+
+async function boot() {
+  applyI18n(); bindEvents(); initProfileTabs(); initStockSlots(); loadProfileUi();
+  const db = loadDb();
+  $('bright').value = String(db.config.bright??1);
+  $('timeout').value = String(db.config.timeout??1);
+  $('m5lang').value = db.config.english?'1':'0';
+  $('wifiSsid').value = db.config.wifiSsid||'';
+  $('wifiPass').value = db.config.wifiPass||'';
+  await syncRoutes().catch(()=>{});
+  const id = parseUrlId();
+  if (id && id.length>=8) {
+    log(lang==='en'?`Auto-connect ${id}`:`自動連線 ${id}`,'info');
+    try { connect(); pushWeather().catch(()=>{}); } catch(e) { log(e.message,'warn'); }
+  }
+}
+
+boot().catch(e=>log(e.message,'err'));
+})();
+</script>
+</body>
+</html>
