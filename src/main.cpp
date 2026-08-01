@@ -1,6 +1,6 @@
 /**
  * M5StickS3 Firmware v6.0
- * NVS Engine · MQTT State Bus · Bus/RSSI/Stock/Weather Modules · Carousel UI
+ * NVS Engine · MQTT State Bus · Bus/Stock/Weather Modules · Carousel UI
  */
 #include <Arduino.h>
 #include <WiFi.h>
@@ -33,7 +33,7 @@ static constexpr uint32_t LONG_PRESS_MS = 1500;
 static constexpr uint8_t MULTI_CLICK_TARGET = 5;
 static constexpr int PROFILE_COUNT = 4;
 static constexpr int STOCK_SLOTS = 4;
-static constexpr int CAROUSEL_CARDS = 8;
+static constexpr int CAROUSEL_CARDS = 7;
 static constexpr int STOCK_HISTORY_MAX = 48;
 static constexpr int FORECAST_MAX = 9;
 static constexpr int WARNING_MAX = 8;
@@ -56,7 +56,7 @@ static char g_mqttPayload[MQTT_BUFFER_SIZE];
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-enum class AppMode : uint8_t { Bus = 0, Rssi, Stock, Weather, Count };
+enum class AppMode : uint8_t { Bus = 0, Stock, Weather, Count };
 enum class UiScreen : uint8_t { Module, Carousel, QrCode };
 
 struct BusStopCfg {
@@ -66,6 +66,7 @@ struct BusStopCfg {
     char svc[4] = "1";
     char bound[2] = "O";
     char name[32] = "";
+    char dest[32] = "";
 };
 
 struct BusProfile {
@@ -84,18 +85,12 @@ struct WifiCfg {
     char password[65] = "";
 };
 
-struct RadarCfg {
-    char ssid[33] = "";
-    char mac[18] = "";
-};
-
 struct DeviceSettings {
     uint8_t bright = 1;
     uint8_t timeout = 1;
     bool english = false;
     AppMode appMode = AppMode::Bus;
     WifiCfg wifi;
-    RadarCfg radar;
     StockSlot stocks[STOCK_SLOTS];
     int activeStock = 0;
 };
@@ -142,12 +137,11 @@ static WiFiClient g_wifiClient;
 static PubSubClient g_mqtt(g_wifiClient);
 static M5Canvas g_canvas(&M5.Display);
 
+static const uint16_t C_DARKGREY = 0x4208;
+
 static UiScreen g_ui = UiScreen::Module;
-static int g_carouselIdx = 0;
+static int g_menuCardIdx = 0;
 static bool g_weatherForecastView = false;
-static int g_imuRotation = 0;
-static int g_radarRssi = -127, g_radarPct = 0, g_radarCh = 0;
-static uint32_t g_lastRssiScan = 0;
 static uint32_t g_lastActivity = 0, g_lastEta = 0, g_lastState = 0;
 static bool g_bootTasksDone = false;
 static uint8_t g_etaStep = 0;
@@ -156,11 +150,72 @@ static bool g_ntpDone = false;
 static bool g_mqttOk = false;
 static char g_lastAction[20] = "";
 static uint32_t g_lastActionSeq = 0;
+static bool g_frameDirty = true;
+static uint32_t g_lastFrameMs = 0;
+static uint32_t g_lastFrameHash = 0;
+
+static constexpr int BUS_COL_A_X = 60;
+static constexpr int BUS_COL_B_X = 180;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-static void touch() { g_lastActivity = millis(); }
+static void touch() {
+    g_lastActivity = millis();
+    g_frameDirty = true;
+}
+
+static uint16_t etaColor(int mins) {
+    if (mins <= 5) return TFT_RED;
+    if (mins <= 10) return TFT_ORANGE;
+    return TFT_GREEN;
+}
+
+static void drawMc(M5Canvas& c, const lgfx::IFont* font, const char* text, int cx, int cy, uint16_t col) {
+    c.setFont(font);
+    c.setTextColor(col);
+    c.setTextDatum(textdatum_t::middle_center);
+    c.drawString(text, cx, cy);
+    c.setTextDatum(textdatum_t::top_left);
+}
+
+static uint32_t computeFrameHash() {
+    uint32_t h = 0x811c9dc5;
+    auto mix = [&](uint32_t v) { h ^= v; h *= 0x01000193; };
+    mix((uint32_t)g_ui);
+    mix((uint32_t)g_cfg.appMode);
+    mix((uint32_t)g_menuCardIdx);
+    mix((uint32_t)g_activeProfile);
+    mix((uint32_t)g_cfg.activeStock);
+    mix(g_weatherForecastView ? 1u : 0u);
+    mix(g_cfg.english ? 1u : 0u);
+    mix(g_cfg.bright);
+    mix(g_cfg.timeout);
+    mix(g_stock.has ? 1u : 0u);
+    if (g_stock.has) mix((uint32_t)(g_stock.price * 100));
+    mix(g_weather.has ? 1u : 0u);
+    if (g_cfg.appMode == AppMode::Bus && g_ui == UiScreen::Module) {
+        for (int i = 0; i < ETA_SLOTS; ++i) {
+            mix((uint32_t)g_colA.slots[i].minutes);
+            mix(g_colA.slots[i].valid ? 1u : 0u);
+            mix((uint32_t)g_colB.slots[i].minutes);
+            mix(g_colB.slots[i].valid ? 1u : 0u);
+        }
+        mix((uint32_t)(time(nullptr) / 60));
+    }
+    return h;
+}
+
+static bool shouldRenderFrame() {
+    uint32_t now = millis();
+    uint32_t hash = computeFrameHash();
+    if (!g_frameDirty && hash == g_lastFrameHash) return false;
+    if (g_lastFrameMs && (now - g_lastFrameMs) < 50) return false;
+    g_frameDirty = false;
+    g_lastFrameHash = hash;
+    g_lastFrameMs = now;
+    return true;
+}
 
 static uint8_t brightVal() {
     static const uint8_t lv[] = {64, 128, 192, 255};
@@ -194,7 +249,6 @@ static uint32_t timeoutMs() {
 static const char* modeStr(AppMode m) {
     switch (m) {
         case AppMode::Bus: return "bus";
-        case AppMode::Rssi: return "rssi";
         case AppMode::Stock: return "stock";
         case AppMode::Weather: return "weather";
         default: return "bus";
@@ -203,7 +257,6 @@ static const char* modeStr(AppMode m) {
 
 static AppMode modeFrom(const char* s) {
     if (!s) return AppMode::Bus;
-    if (!strcmp(s, "rssi") || !strcmp(s, "rssi_monitor")) return AppMode::Rssi;
     if (!strcmp(s, "stock")) return AppMode::Stock;
     if (!strcmp(s, "weather")) return AppMode::Weather;
     return AppMode::Bus;
@@ -233,18 +286,50 @@ static int batteryPct() {
     return constrain(p, 0, 100);
 }
 
-static void setRotation(int r) {
-    g_imuRotation = r & 3;
-    M5.Display.setRotation(g_imuRotation);
+static bool g_spriteLandscape = false;
+
+static void ensureSpriteLayout(bool landscape) {
+    const int rot = landscape ? 1 : 2;
+    const int w = landscape ? LAND_W : PORTRAIT_W;
+    const int h = landscape ? LAND_H : PORTRAIT_H;
+    M5.Display.setRotation(rot);
+    if (!g_canvas.getBuffer() || g_spriteLandscape != landscape ||
+        g_canvas.width() != w || g_canvas.height() != h) {
+        if (g_canvas.getBuffer()) g_canvas.deleteSprite();
+        g_canvas.setColorDepth(16);
+        g_canvas.createSprite(w, h);
+        g_spriteLandscape = landscape;
+    }
 }
 
-static void updateImu4Way(bool enabled) {
-    if (!enabled) return;
-    auto imu = M5.Imu.getImuData();
-    float ax = imu.accel.x, ay = imu.accel.y;
-    if (fabsf(ax) < 0.25f && fabsf(ay) < 0.25f) return;
-    if (fabsf(ax) > fabsf(ay)) setRotation(ax > 0 ? 1 : 3);
-    else setRotation(ay > 0 ? 2 : 0);
+static void drawCenteredText(M5Canvas& c, int w, int y, const char* text, uint16_t col) {
+    c.setFont(&fonts::Font0);
+    c.setTextSize(1);
+    c.setTextColor(col);
+    int tw = c.textWidth(text);
+    c.setCursor((w - tw) / 2, y);
+    c.print(text);
+}
+
+static void drawCenteredEfont(M5Canvas& c, int w, int y, const char* text, uint16_t col) {
+    c.setFont(&fonts::efontTW_12);
+    c.setTextColor(col);
+    int tw = c.textWidth(text);
+    c.setCursor((w - tw) / 2, y);
+    c.print(text);
+}
+
+static void drawRightEfont(M5Canvas& c, int rightX, int y, const char* text, uint16_t col) {
+    c.setFont(&fonts::efontTW_12);
+    c.setTextColor(col);
+    int tw = c.textWidth(text);
+    c.setCursor(rightX - tw, y);
+    c.print(text);
+}
+
+static bool frameIsLandscape() {
+    if (g_ui == UiScreen::Carousel || g_ui == UiScreen::QrCode) return false;
+    return g_cfg.appMode == AppMode::Bus || g_cfg.appMode == AppMode::Stock;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +348,7 @@ static void saveNvs() {
             JsonObject o = p[k].to<JsonObject>();
             o["co"] = b.co; o["route"] = b.route; o["stop"] = b.stop;
             o["svc"] = b.svc; o["bound"] = b.bound; o["name"] = b.name;
+            o["dest"] = b.dest;
         };
         wb("busA", pr.busA);
         wb("busB", pr.busB);
@@ -283,9 +369,6 @@ static void saveNvs() {
         p["id"] = i;
         writeBusProfile(p, g_profiles[i]);
     }
-    JsonObject rssi = mods["rssi"].to<JsonObject>();
-    rssi["radar_ssid"] = g_cfg.radar.ssid;
-    rssi["radar_mac"] = g_cfg.radar.mac;
     JsonObject stock = mods["stock"].to<JsonObject>();
     stock["active_stock"] = g_cfg.activeStock;
     JsonArray watchlist = stock["watchlist"].to<JsonArray>();
@@ -302,8 +385,6 @@ static void saveNvs() {
     s["app_mode"] = modeStr(g_cfg.appMode);
     s["wifi"]["ssid"] = g_cfg.wifi.ssid;
     s["wifi"]["password"] = g_cfg.wifi.password;
-    s["radar"]["ssid"] = g_cfg.radar.ssid;
-    s["radar"]["mac"] = g_cfg.radar.mac;
     JsonArray stocks = s["stocks"].to<JsonArray>();
     for (int i = 0; i < STOCK_SLOTS; ++i) {
         JsonObject st = stocks.add<JsonObject>();
@@ -323,6 +404,7 @@ static void readBus(JsonObjectConst o, BusStopCfg& b) {
     if (o["svc"].is<const char*>()) strlcpy(b.svc, o["svc"], sizeof(b.svc));
     if (o["bound"].is<const char*>()) strlcpy(b.bound, o["bound"], sizeof(b.bound));
     if (o["name"].is<const char*>()) strlcpy(b.name, o["name"], sizeof(b.name));
+    if (o["dest"].is<const char*>()) strlcpy(b.dest, o["dest"], sizeof(b.dest));
 }
 
 static void applyBusProfiles(JsonArrayConst arr) {
@@ -367,13 +449,6 @@ static void applyConfig(const char* json, size_t len) {
             if (bus["profiles"].is<JsonArrayConst>())
                 applyBusProfiles(bus["profiles"].as<JsonArrayConst>());
         }
-        JsonObjectConst rssi = mods["rssi"];
-        if (!rssi.isNull()) {
-            const char* ssid = rssi["radar_ssid"] | rssi["ssid"];
-            const char* mac = rssi["radar_mac"] | rssi["mac"] | rssi["bssid"];
-            if (ssid) strlcpy(g_cfg.radar.ssid, ssid, sizeof(g_cfg.radar.ssid));
-            if (mac) strlcpy(g_cfg.radar.mac, mac, sizeof(g_cfg.radar.mac));
-        }
         JsonObjectConst stock = mods["stock"];
         if (!stock.isNull()) {
             if (stock["active_stock"].is<int>()) g_cfg.activeStock = stock["active_stock"];
@@ -393,9 +468,6 @@ static void applyConfig(const char* json, size_t len) {
         // app_mode 僅由裝置按鍵/選單切換，MQTT 不覆寫
         if (st["wifi"]["ssid"].is<const char*>()) strlcpy(g_cfg.wifi.ssid, st["wifi"]["ssid"], sizeof(g_cfg.wifi.ssid));
         if (st["wifi"]["password"].is<const char*>()) strlcpy(g_cfg.wifi.password, st["wifi"]["password"], sizeof(g_cfg.wifi.password));
-        if (st["radar"]["ssid"].is<const char*>()) strlcpy(g_cfg.radar.ssid, st["radar"]["ssid"], sizeof(g_cfg.radar.ssid));
-        const char* mac = st["radar"]["mac"] | st["radar"]["bssid"];
-        if (mac) strlcpy(g_cfg.radar.mac, mac, sizeof(g_cfg.radar.mac));
         if (st["stocks"].is<JsonArrayConst>()) applyWatchlist(st["stocks"].as<JsonArrayConst>());
     }
     M5.Display.setBrightness(brightVal());
@@ -411,10 +483,12 @@ static void loadNvs() {
         strlcpy(g_profiles[0].busA.route, "76K", sizeof(g_profiles[0].busA.route));
         strlcpy(g_profiles[0].busA.stop, "68C988CE5394BAE7", sizeof(g_profiles[0].busA.stop));
         strlcpy(g_profiles[0].busA.name, g_cfg.english ? "Long Ping" : "朗屏", sizeof(g_profiles[0].busA.name));
+        strlcpy(g_profiles[0].busA.dest, g_profiles[0].busA.name, sizeof(g_profiles[0].busA.dest));
         strlcpy(g_profiles[0].busB.co, "KMB", sizeof(g_profiles[0].busB.co));
         strlcpy(g_profiles[0].busB.route, "76K", sizeof(g_profiles[0].busB.route));
         strlcpy(g_profiles[0].busB.stop, "B0D79D5CE512B9EC", sizeof(g_profiles[0].busB.stop));
         strlcpy(g_profiles[0].busB.name, g_cfg.english ? "Sheung Shui" : "上水", sizeof(g_profiles[0].busB.name));
+        strlcpy(g_profiles[0].busB.dest, g_profiles[0].busB.name, sizeof(g_profiles[0].busB.dest));
         strlcpy(g_cfg.stocks[0].symbol, "0700.HK", sizeof(g_cfg.stocks[0].symbol));
         strlcpy(g_cfg.stocks[0].name, "Tencent", sizeof(g_cfg.stocks[0].name));
     }
@@ -486,6 +560,7 @@ static void etaTick() {
         g_etaStep = 0;
         g_lastEta = millis();
         g_bootTasksDone = true;
+        g_frameDirty = true;
     }
 }
 
@@ -589,14 +664,10 @@ static void publishState() {
         JsonObject o = g_jsonDoc[k].to<JsonObject>();
         o["co"] = b.co; o["route"] = b.route; o["stop"] = b.stop;
         o["name"] = b.name;
+        o["dest"] = b.dest;
     };
     wb("busA", g_profiles[g_activeProfile].busA);
     wb("busB", g_profiles[g_activeProfile].busB);
-    if (g_cfg.appMode == AppMode::Rssi) {
-        g_jsonDoc["radar_rssi"] = g_radarRssi;
-        g_jsonDoc["radar_pct"] = g_radarPct;
-        g_jsonDoc["radar_channel"] = g_radarCh;
-    }
     if (g_lastAction[0]) {
         g_jsonDoc["last_action"] = g_lastAction;
         g_jsonDoc["last_action_seq"] = g_lastActionSeq;
@@ -674,7 +745,6 @@ public:
     virtual void onExit() {}
     virtual bool forcePortrait() const { return false; }
     virtual bool forceLandscape() const { return false; }
-    virtual bool imu4Way() const { return false; }
 };
 
 // ---------------------------------------------------------------------------
@@ -684,7 +754,6 @@ class BusModule : public AppModule {
 public:
     const char* id() const override { return "bus"; }
     bool forceLandscape() const override { return true; }
-    bool imu4Way() const override { return true; }
 
     void onLoop() override {
         etaTick();
@@ -698,113 +767,83 @@ public:
     void onBtnALongPress() override { fetchAllEta(); }
 
     void render(M5Canvas& c, int w, int h) override {
-        int cw = w / 2;
-        drawCol(c, 0, 0, cw, h, g_colA, g_profiles[g_activeProfile].busA);
-        drawCol(c, cw, 0, cw, h, g_colB, g_profiles[g_activeProfile].busB);
-        c.setTextSize(1);
-        c.setTextColor(C_DIM);
-        c.setCursor(2, h - 10);
-        c.printf("P%d %s", g_activeProfile + 1, g_profiles[g_activeProfile].name);
-        c.setCursor(w - 72, h - 10);
-        c.print(g_cfg.english ? "B:Menu Ax5" : "B:選單 A×5");
+        (void)w;
+        (void)h;
+        c.fillSprite(C_BG);
+
+        char header[40];
+        snprintf(header, sizeof(header), "BUS ETA   P%d", g_activeProfile + 1);
+        drawMc(c, &fonts::Font0, header, 120, 12, C_DIM);
+
+        drawCol(c, BUS_COL_A_X, g_colA, g_profiles[g_activeProfile].busA);
+        drawCol(c, BUS_COL_B_X, g_colB, g_profiles[g_activeProfile].busB);
+
+        drawMc(c, &fonts::Font0,
+               g_cfg.english ? "[A] Profile  [B] Menu" : "[A] Profile  [B] Menu",
+               120, 120, C_DIM);
     }
 
 private:
-    void drawCol(M5Canvas& c, int x, int y, int w, int h, const BusColState& col, const BusStopCfg& cfg) {
-        c.fillRect(x, y, w, h, C_BG);
-        c.drawFastVLine(x + w - 1, y, h, C_DIM);
-        c.setTextColor(C_AMBER);
-        c.setTextSize(1);
-        c.setCursor(x + 2, y + 2);
-        c.printf("%s %s", cfg.co, col.route);
-        c.setTextColor(C_FG);
-        c.setCursor(x + 2, y + 14);
-        c.print(col.stop);
-        int ry = y + 28;
+    static void shortenLabel(char* dst, size_t n, const char* src) {
+        if (!src || !src[0]) { dst[0] = '\0'; return; }
+        strlcpy(dst, src, n);
+        if (strlen(dst) > 10) {
+            dst[9] = '\0';
+            strlcat(dst, "..", n);
+        }
+    }
+
+    static const char* resolveDest(const BusColState& col, const BusStopCfg& cfg, char* buf, size_t n) {
+        if (cfg.dest[0]) return cfg.dest;
         for (int i = 0; i < ETA_SLOTS; ++i) {
-            if (col.slots[i].valid) {
-                c.setFont(&fonts::Font4);
-                c.setTextColor(C_CYAN);
-                c.setCursor(x + 4, ry);
-                c.printf("%d'", col.slots[i].minutes);
-                c.setFont(&fonts::Font0);
-                c.setTextSize(1);
-                c.setTextColor(C_FG);
-                c.setCursor(x + 4, ry + 18);
-                c.print(col.slots[i].dest);
-                ry += 36;
-            }
+            if (col.slots[i].valid && col.slots[i].dest[0]) return col.slots[i].dest;
         }
-        if (!col.ok) {
-            c.setTextSize(1);
-            c.setTextColor(C_DIM);
-            c.setCursor(x + 4, ry);
+        if (cfg.name[0]) return cfg.name;
+        shortenLabel(buf, n, col.stop);
+        return buf;
+    }
+
+    static int firstEtaMins(const BusColState& col) {
+        for (int i = 0; i < ETA_SLOTS; ++i) {
+            if (col.slots[i].valid) return col.slots[i].minutes;
+        }
+        return -1;
+    }
+
+    void drawCol(M5Canvas& c, int cx, const BusColState& col, const BusStopCfg& cfg) {
+        char destBuf[16];
+        const char* dest = resolveDest(col, cfg, destBuf, sizeof(destBuf));
+        const char* route = col.route[0] ? col.route : cfg.route;
+
+        char routeLine[40];
+        snprintf(routeLine, sizeof(routeLine), "%s %s", route, dest);
+
+        if (g_cfg.english)
+            drawMc(c, &fonts::Font0, routeLine, cx, 40, TFT_WHITE);
+        else
+            drawMc(c, &fonts::efontTW_12, routeLine, cx, 40, TFT_WHITE);
+
+        int mins = firstEtaMins(col);
+        if (mins < 0) {
+            const char* msg;
             if (WiFi.status() != WL_CONNECTED)
-                c.print(g_cfg.english ? "No WiFi" : "無 WiFi");
+                msg = g_cfg.english ? "--" : "--";
             else if (!cfg.route[0] || !cfg.stop[0])
-                c.print(g_cfg.english ? "No stop" : "未設站點");
+                msg = g_cfg.english ? "--" : "--";
             else
-                c.print(g_cfg.english ? "Loading..." : "載入中...");
+                msg = g_cfg.english ? "..." : "...";
+            drawMc(c, &fonts::Font4, msg, cx, 80, C_DIM);
+            return;
         }
-    }
-};
 
-// ---------------------------------------------------------------------------
-// RssiModule
-// ---------------------------------------------------------------------------
-class RssiModule : public AppModule {
-public:
-    const char* id() const override { return "rssi"; }
-    bool forcePortrait() const override { return true; }
-
-    void onLoop() override {
-        if (millis() - g_lastRssiScan < 2000) return;
-        g_lastRssiScan = millis();
-        const char* tgt = g_cfg.radar.ssid[0] ? g_cfg.radar.ssid : WiFi.SSID().c_str();
-        int n = WiFi.scanNetworks(false, true);
-        int best = -127, ch = 0;
-        for (int i = 0; i < n; ++i) {
-            bool match = g_cfg.radar.mac[0] ? WiFi.BSSIDstr(i).equalsIgnoreCase(g_cfg.radar.mac)
-                                            : (WiFi.SSID(i) == tgt);
-            if (match && WiFi.RSSI(i) > best) { best = WiFi.RSSI(i); ch = WiFi.channel(i); }
+        if (mins <= 0) {
+            drawMc(c, &fonts::Font6, "0", cx, 80, TFT_RED);
+            return;
         }
-        WiFi.scanDelete();
-        if (best > -127) {
-            g_radarRssi = best; g_radarCh = ch;
-            g_radarPct = constrain(map(best, -90, -30, 0, 100), 0, 100);
-        }
-    }
 
-    void onBtnAPress() override { g_cfg.appMode = AppMode::Bus; saveNvs(); }
-
-    void onBtnALongPress() override { onLoop(); }
-
-    void render(M5Canvas& c, int w, int h) override {
-        c.fillSprite(C_BG);
-        c.setTextColor(C_CYAN);
-        c.setTextSize(2);
-        c.setCursor(4, 4);
-        c.print("RSSI");
-        c.setTextSize(1);
-        c.setTextColor(C_FG);
-        c.setCursor(4, 28);
-        c.printf("SSID: %s", g_cfg.radar.ssid[0] ? g_cfg.radar.ssid : WiFi.SSID().c_str());
-        if (g_cfg.radar.mac[0]) { c.setCursor(4, 40); c.printf("MAC: %s", g_cfg.radar.mac); }
-        int barW = w - 16, barH = 20, barY = h / 2 - 8;
-        c.drawRect(8, barY, barW, barH, C_DIM);
-        int fill = map(g_radarPct, 0, 100, 0, barW - 2);
-        uint16_t col = g_radarPct > 60 ? C_GREEN : (g_radarPct > 30 ? C_AMBER : C_RED);
-        c.fillRect(9, barY + 1, fill, barH - 2, col);
-        c.setTextSize(2);
-        c.setTextColor(C_FG);
-        c.setCursor(8, barY + barH + 8);
-        c.printf("%d dBm", g_radarRssi);
-        c.setTextSize(1);
-        c.setCursor(8, barY + barH + 32);
-        c.printf("%d%%  CH %d", g_radarPct, g_radarCh);
-        c.setTextColor(C_DIM);
-        c.setCursor(4, h - 10);
-        c.print(g_cfg.english ? "A/B:Back Bus" : "A/B:返巴士");
+        char num[8];
+        snprintf(num, sizeof(num), "%d", mins);
+        drawMc(c, &fonts::Font6, num, cx, 80, etaColor(mins));
     }
 };
 
@@ -828,29 +867,56 @@ public:
     void onBtnALongPress() override { publishRefreshRequest("stock"); }
 
     void render(M5Canvas& c, int w, int h) override {
+        (void)h;
         c.fillSprite(C_BG);
+        c.fillRect(0, 114, w, 21, C_DARKGREY);
+
         if (!g_stock.has) {
-            c.setTextColor(C_DIM);
-            c.setCursor(8, h / 2);
-            c.print(g_cfg.english ? "Awaiting stock MQTT..." : "等待股票 MQTT...");
+            drawCenteredText(c, w, 58,
+                g_cfg.english ? "Awaiting stock MQTT..." : "\xe7\xad\x89\xe5\xbe\x85\xe8\x82\xa1\xe7\xa5\xa8 MQTT...",
+                C_DIM);
+            drawCenteredText(c, w, 122,
+                g_cfg.english ? "[A] Next Stock | [B] Menu"
+                              : "[\xe8\x97\x8d\xe6\x91\x83] \xe5\x88\x87\xe6\x8f\x9b\xe8\x82\xa1\xe7\xa5\xa8 | [\xe5\x81\xb4\xe6\x91\x83] \xe9\x81\xb8\xe5\x96\xae",
+                C_DIM);
             return;
         }
-        bool up = g_stock.change >= 0;
-        uint16_t tc = up ? C_GREEN : C_RED;
+
+        const bool up = g_stock.change >= 0;
+        const uint16_t tc = up ? C_GREEN : C_RED;
+
+        // Left area (x=4..110)
+        c.setFont(&fonts::Font0);
         c.setTextSize(1);
         c.setTextColor(C_FG);
-        c.setCursor(4, 2);
-        c.printf("%s %s", g_stock.symbol, g_stock.name);
-        c.setTextSize(2);
-        c.setTextColor(tc);
-        c.setCursor(4, 14);
-        c.printf("%.2f", g_stock.price);
-        c.setTextSize(1);
-        c.printf(" %+.2f (%+.1f%%)", g_stock.change, g_stock.changePct);
-        drawProfessionalWaveChart(c, 4, 40, w - 8, h - 50, tc);
+        c.setCursor(4, 28);
+        c.print(g_stock.symbol);
         c.setTextColor(C_DIM);
-        c.setCursor(4, h - 10);
-        c.print(g_cfg.english ? "A:Next B:Menu" : "A:換股 B:選單");
+        c.setCursor(4, 42);
+        c.print(g_stock.name);
+
+        c.setFont(&fonts::Font2);
+        c.setTextColor(C_FG);
+        c.setCursor(4, 62);
+        c.printf("$%.2f", g_stock.price);
+
+        c.fillCircle(10, 92, 7, tc);
+        c.setFont(&fonts::Font0);
+        c.setTextSize(1);
+        c.setTextColor(tc);
+        c.setCursor(22, 86);
+        c.printf("%+.2f", g_stock.change);
+        c.setCursor(22, 98);
+        c.printf("%+.1f%%", g_stock.changePct);
+
+        // Right area chart (x=115..236, y=22..112)
+        c.drawRect(115, 22, 121, 90, C_DARKGREY);
+        drawProfessionalWaveChart(c, 118, 25, 115, 84, tc);
+
+        drawCenteredText(c, w, 122,
+            g_cfg.english ? "[A] Next Stock | [B] Menu"
+                          : "[\xe8\x97\x8d\xe6\x91\x83] \xe5\x88\x87\xe6\x8f\x9b\xe8\x82\xa1\xe7\xa5\xa8 | [\xe5\x81\xb4\xe6\x91\x83] \xe9\x81\xb8\xe5\x96\xae",
+            C_DIM);
     }
 
 private:
@@ -862,9 +928,12 @@ private:
             maxV = max(maxV, g_stock.hist[i]);
         }
         if (g_stock.prevClose > 0) { minV = min(minV, g_stock.prevClose); maxV = max(maxV, g_stock.prevClose); }
-        float range = max(maxV - minV, 0.01f);
-        int baseY = y + h - (int)((g_stock.prevClose - minV) / range * (h - 4));
-        for (int dx = x; dx < x + w; dx += 4) c.drawPixel(dx, baseY, C_DIM);
+        const float range = max(maxV - minV, 0.01f);
+        if (g_stock.prevClose > 0) {
+            int baseY = y + h - (int)((g_stock.prevClose - minV) / range * (h - 4));
+            for (int dx = x; dx < x + w; dx += 3)
+                if (((dx - x) / 3) % 2 == 0) c.drawPixel(dx, baseY, C_DIM);
+        }
         int px = x, py = y + h;
         for (int i = 0; i < g_stock.histCount; ++i) {
             int cx = x + (i * (w - 1)) / max(1, g_stock.histCount - 1);
@@ -952,14 +1021,12 @@ public:
 };
 
 static BusModule g_bus;
-static RssiModule g_rssi;
 static StockModule g_stockMod;
 static WeatherModule g_weatherMod;
 
 static AppModule* modFor(AppMode m) {
     switch (m) {
         case AppMode::Bus: return &g_bus;
-        case AppMode::Rssi: return &g_rssi;
         case AppMode::Stock: return &g_stockMod;
         case AppMode::Weather: return &g_weatherMod;
         default: return &g_bus;
@@ -967,73 +1034,110 @@ static AppModule* modFor(AppMode m) {
 }
 
 // ---------------------------------------------------------------------------
-// Carousel Menu (8 cards, portrait)
+// Carousel Menu (7 cards, portrait)
 // ---------------------------------------------------------------------------
 static const char* cardTitle(int i, bool en) {
-    static const char* zh[] = {"目前模組","巴士 Profile","WiFi 目標","螢幕亮度","休眠時間","顯示語言","配對 QR","儲存離開"};
-    static const char* enT[] = {"Active App","Bus Profile","WiFi Target","Brightness","Sleep Timeout","Language","Pair QR","Save & Exit"};
+    static const char* zh[] = {"目前模組","巴士 Profile","螢幕亮度","休眠時間","顯示語言","配對 QR","儲存離開"};
+    static const char* enT[] = {"Active App","Bus Profile","Brightness","Sleep Timeout","Language","Pair QR","Save & Exit"};
     return en ? enT[i] : zh[i];
 }
 
+static const char* modeLabel(AppMode m) {
+    switch (m) {
+        case AppMode::Bus: return "BUS";
+        case AppMode::Stock: return "STOCK";
+        case AppMode::Weather: return "WEATHER";
+        default: return "BUS";
+    }
+}
+
 static void adjustCarousel() {
-    switch (g_carouselIdx) {
+    switch (g_menuCardIdx) {
         case 0: g_cfg.appMode = (AppMode)(((int)g_cfg.appMode + 1) % (int)AppMode::Count); break;
         case 1: g_activeProfile = (g_activeProfile + 1) % PROFILE_COUNT; break;
-        case 2: {
-            if (g_cfg.radar.ssid[0] == '\0' && WiFi.SSID().length())
-                strlcpy(g_cfg.radar.ssid, WiFi.SSID().c_str(), sizeof(g_cfg.radar.ssid));
-            else
-                g_cfg.radar.ssid[0] = '\0';
-            break;
-        }
-        case 3: g_cfg.bright = (g_cfg.bright + 1) % 4; M5.Display.setBrightness(brightVal()); break;
-        case 4: g_cfg.timeout = (g_cfg.timeout + 1) % 4; break;
-        case 5: g_cfg.english = !g_cfg.english; break;
-        case 6: g_ui = UiScreen::QrCode; return;
-        case 7: saveNvs(); g_ui = UiScreen::Module; return;
+        case 2: g_cfg.bright = (g_cfg.bright + 1) % 4; M5.Display.setBrightness(brightVal()); break;
+        case 3: g_cfg.timeout = (g_cfg.timeout + 1) % 4; break;
+        case 4: g_cfg.english = !g_cfg.english; break;
+        case 5: g_ui = UiScreen::QrCode; return;
+        case 6: saveNvs(); g_ui = UiScreen::Module; return;
     }
     saveNvs();
 }
 
-static void renderCarousel(M5Canvas& c, int w, int h) {
-    c.fillSprite(C_BG);
-    c.setTextColor(C_AMBER);
-    c.setCursor(4, 2);
-    c.print(g_cfg.english ? "Carousel Menu" : "系統選單");
-    int cardH = 26;
-    for (int i = 0; i < CAROUSEL_CARDS; ++i) {
-        int y = 16 + i * cardH;
-        if (y > h - cardH) break;
-        bool act = i == g_carouselIdx;
-        if (act) c.drawRoundRect(2, y, w - 4, cardH - 2, 3, C_AMBER);
-        c.setTextColor(act ? C_FG : C_DIM);
-        c.setCursor(8, y + 8);
-        c.print(cardTitle(i, g_cfg.english));
-        c.setCursor(w - 52, y + 8);
-        c.setTextColor(C_CYAN);
-        switch (i) {
-            case 0: c.print(modeStr(g_cfg.appMode)); break;
-            case 1: c.printf("P%d", g_activeProfile + 1); break;
-            case 2: c.print(g_cfg.wifi.ssid[0] ? g_cfg.wifi.ssid : WiFi.SSID()); break;
-            case 3: c.printf("%d%%", (g_cfg.bright + 1) * 25); break;
-            case 4: { const char* t[] = {"15s","30s","60s","Off"}; c.print(t[g_cfg.timeout]); break; }
-            case 5: c.print(g_cfg.english ? "EN" : "中"); break;
-            case 6: c.print("QR"); break;
-            case 7: c.print("OK"); break;
+static void cardValue(M5Canvas& c, int idx, int cardW) {
+    char buf[32];
+    uint16_t col = C_CYAN;
+    switch (idx) {
+        case 0:
+            snprintf(buf, sizeof(buf), "%s", modeLabel(g_cfg.appMode));
+            break;
+        case 1:
+            snprintf(buf, sizeof(buf), "P%d", g_activeProfile + 1);
+            break;
+        case 2:
+            snprintf(buf, sizeof(buf), "%d%%", (g_cfg.bright + 1) * 25);
+            break;
+        case 3: {
+            static const char* t[] = {"15s", "30s", "60s", "Off"};
+            snprintf(buf, sizeof(buf), "%s", t[g_cfg.timeout > 3 ? 1 : g_cfg.timeout]);
+            break;
         }
+        case 4:
+            snprintf(buf, sizeof(buf), "%s", g_cfg.english ? "EN" : "\xe4\xb8\xad");
+            break;
+        case 5:
+            snprintf(buf, sizeof(buf), "QR");
+            col = C_AMBER;
+            break;
+        case 6:
+            snprintf(buf, sizeof(buf), "OK");
+            col = C_GREEN;
+            break;
+        default:
+            buf[0] = '\0';
+            break;
     }
+    c.setFont(&fonts::Font4);
+    c.setTextColor(col);
+    int tw = c.textWidth(buf);
+    c.setCursor((cardW - tw) / 2 + 6, 100);
+    c.print(buf);
+    c.setFont(&fonts::Font0);
+}
+
+static void renderCarousel(M5Canvas& c, int w, int h) {
+    (void)w;
+    c.fillSprite(C_BG);
+
+    c.setFont(&fonts::Font0);
+    c.setTextSize(1);
+    c.setTextColor(C_AMBER);
+    c.setCursor(8, 8);
+    c.printf("MENU (%d/%d)", g_menuCardIdx + 1, CAROUSEL_CARDS);
+
+    c.drawRoundRect(6, 28, 123, 160, 8, TFT_CYAN);
+
+    c.setTextColor(C_FG);
+    c.setCursor(12, 45);
+    c.print(cardTitle(g_menuCardIdx, g_cfg.english));
+
+    cardValue(c, g_menuCardIdx, w);
+
     c.setTextColor(C_DIM);
-    c.setCursor(4, h - 10);
-    c.print(g_cfg.english ? "A:adjust B:next" : "A:調整 B:下一項");
+    c.setCursor(8, 210);
+    c.print(g_cfg.english ? "[A] Change | [B] Next" : "[A] \xe8\xaa\xbf\xe6\x95\xb4 | [B] \xe4\xb8\x8b\xe4\xb8\x80\xe9\xa0\x85");
+    (void)h;
 }
 
 static void renderQr() {
+    ensureSpriteLayout(false);
     String url = "https://sbgitdept.github.io/m5-bus-controller/?id=" + g_deviceId;
-    setRotation(0);
-    M5.Display.fillScreen(C_BG);
-    M5.Display.setTextColor(C_FG);
-    M5.Display.setCursor(4, 4);
-    M5.Display.print(g_cfg.english ? "Scan to Pair" : "掃描配對");
+    g_canvas.fillSprite(C_BG);
+    g_canvas.setFont(&fonts::Font0);
+    g_canvas.setTextSize(1);
+    g_canvas.setTextColor(C_FG);
+    g_canvas.setCursor(4, 4);
+    g_canvas.print(g_cfg.english ? "Scan to Pair" : "\xe6\x8e\x83\xe6\x8f\x8f\xe9\x85\x8d\xe5\xb0\x8d");
     uint8_t buf[qrcode_getBufferSize(3)];
     QRCode qr;
     qrcode_initText(&qr, buf, 3, ECC_LOW, url.c_str());
@@ -1041,13 +1145,14 @@ static void renderQr() {
     int ox = (PORTRAIT_W - sz) / 2, oy = 28;
     for (int y = 0; y < qr.size; ++y)
         for (int x = 0; x < qr.size; ++x)
-            M5.Display.fillRect(ox + x * scale, oy + y * scale, scale, scale,
-                                qrcode_getModule(&qr, x, y) ? C_FG : C_BG);
-    M5.Display.setCursor(4, oy + sz + 6);
-    M5.Display.println(g_deviceId);
-    M5.Display.setCursor(4, PORTRAIT_H - 12);
-    M5.Display.setTextColor(C_DIM);
-    M5.Display.print(g_cfg.english ? "Any key closes" : "按鍵關閉");
+            g_canvas.fillRect(ox + x * scale, oy + y * scale, scale, scale,
+                              qrcode_getModule(&qr, x, y) ? C_FG : C_BG);
+    g_canvas.setCursor(4, oy + sz + 6);
+    g_canvas.println(g_deviceId);
+    g_canvas.setCursor(4, PORTRAIT_H - 12);
+    g_canvas.setTextColor(C_DIM);
+    g_canvas.print(g_cfg.english ? "Any key closes" : "\xe6\x8c\x89\xe9\x8d\xb5\xe9\x97\x9c\xe9\x96\x89");
+    g_canvas.pushSprite(0, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1109,24 +1214,20 @@ private:
     void onSingleB(AppModule* mod) {
         if (g_ui == UiScreen::QrCode) { g_ui = UiScreen::Module; return; }
         if (g_ui == UiScreen::Carousel) {
-            g_carouselIdx = (g_carouselIdx + 1) % CAROUSEL_CARDS;
-            return;
-        }
-        if (g_cfg.appMode == AppMode::Rssi) {
-            g_cfg.appMode = AppMode::Bus;
-            saveNvs();
+            g_menuCardIdx = (g_menuCardIdx + 1) % CAROUSEL_CARDS;
+            g_frameDirty = true;
             return;
         }
         if (mod) mod->onBtnBPress();
         g_ui = UiScreen::Carousel;
-        g_carouselIdx = 0;
-        setRotation(0);
+        g_menuCardIdx = 0;
     }
 
     void cycleMode() {
         g_cfg.appMode = (AppMode)(((int)g_cfg.appMode + 1) % (int)AppMode::Count);
         g_ui = UiScreen::Module;
         saveNvs();
+        g_frameDirty = true;
     }
 };
 
@@ -1134,6 +1235,8 @@ static KeyEngine g_keys;
 static AppMode g_lastMode = AppMode::Count;
 
 static void renderFrame() {
+    if (!shouldRenderFrame()) return;
+
     if (g_ui == UiScreen::QrCode) { wakeDisplay(); renderQr(); return; }
 
     wakeDisplay();
@@ -1143,26 +1246,14 @@ static void renderFrame() {
         if (g_lastMode != AppMode::Count) modFor(g_lastMode)->onExit();
         mod->onEnter();
         g_lastMode = g_cfg.appMode;
+        g_frameDirty = true;
     }
     mod->onLoop();
 
-    bool portrait = true;
-    if (g_ui == UiScreen::Carousel) portrait = true;
-    else if (mod->forceLandscape()) portrait = false;
-    else if (mod->forcePortrait()) portrait = true;
-
-    if (portrait) setRotation(0);
-    else if (mod->imu4Way()) updateImu4Way(true);
-    else setRotation(1);
-
-    int w = portrait ? PORTRAIT_W : LAND_W;
-    int h = portrait ? PORTRAIT_H : LAND_H;
-
-    if (!g_canvas.getBuffer() || g_canvas.width() != w || g_canvas.height() != h) {
-        if (g_canvas.getBuffer()) g_canvas.deleteSprite();
-        g_canvas.setColorDepth(16);
-        g_canvas.createSprite(w, h);
-    }
+    bool landscape = frameIsLandscape();
+    ensureSpriteLayout(landscape);
+    int w = landscape ? LAND_W : PORTRAIT_W;
+    int h = landscape ? LAND_H : PORTRAIT_H;
 
     if (g_ui == UiScreen::Carousel) renderCarousel(g_canvas, w, h);
     else mod->render(g_canvas, w, h);
@@ -1185,7 +1276,7 @@ void setup() {
     M5.BtnB.setHoldThresh(LONG_PRESS_MS);
 
     g_lastActivity = millis();
-    M5.Display.setRotation(0);
+    M5.Display.setRotation(1);
     wakeDisplay();
     M5.Display.fillScreen(C_BG);
 
@@ -1197,6 +1288,7 @@ void setup() {
     g_deviceId = id;
 
     loadNvs();
+    if ((int)g_cfg.appMode >= (int)AppMode::Count) g_cfg.appMode = AppMode::Bus;
     g_ui = UiScreen::Module;
     g_cfg.appMode = AppMode::Bus;  // 開機主頁：巴士 ETA
     drawBootSplash();
@@ -1220,5 +1312,5 @@ void loop() {
         }
     }
     renderFrame();
-    delay(5);
+    delay(50);
 }

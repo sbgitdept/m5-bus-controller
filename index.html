@@ -119,7 +119,7 @@
   <div class="header">
     <div>
       <h1>📱 <span data-i18n="title">M5 匙扣 CRM 控制台</span></h1>
-      <p class="header-sub" data-i18n="subtitle">v6.0 · 巴士 · RSSI · 股票 · 天氣 · <a href="plans.html" style="color:#67e8f9">計劃書</a></p>
+      <p class="header-sub" data-i18n="subtitle">v6.0 · 巴士 · 股票 · 天氣 · <a href="plans.html" style="color:#67e8f9">計劃書</a></p>
     </div>
     <div class="header-badges">
       <button class="lang-pill" id="langBtn" type="button">繁體中文 / EN</button>
@@ -143,9 +143,8 @@
 
   <div class="nav-tabs">
     <button class="nav-btn active tab" data-tab="bus" type="button">🚌 <span data-i18n="tabBus">巴士 ETA</span></button>
-    <button class="nav-btn tab" data-tab="rssi" type="button">📡 <span data-i18n="tabRssi">RSSI 雷達</span></button>
     <button class="nav-btn tab" data-tab="stock" type="button">📈 <span data-i18n="tabStock">股票報價</span></button>
-    <button class="nav-btn tab" data-tab="weather" type="button">🌤️ <span data-i18n="tabWeather">天氣預報</span></button>
+    <button class="nav-btn tab" data-tab="weather" type="button">🌤️ <span data-i18n="tabWeather">天氣同步</span></button>
     <button class="nav-btn tab" data-tab="settings" type="button">⚙️ <span data-i18n="tabSettings">系統設定</span></button>
   </div>
 
@@ -187,31 +186,6 @@
       </div>
       <button class="btn btn-secondary btn-sm" id="btnSyncRoutes" type="button" data-i18n="syncRoutes">🔄 同步路線</button>
       <button class="btn" id="btnSendBus" type="button" data-i18n="sendBus">📡 發送 Profile 設定至 M5</button>
-    </div>
-  </div>
-
-  <!-- RSSI -->
-  <div id="panel-rssi" class="panel hidden">
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">📡 <span data-i18n="rssiTitle">WiFi RSSI 雷達 Target</span></div>
-      </div>
-      <div id="rssiLive" class="live-box hidden"></div>
-      <label>App Mode</label>
-      <select id="appMode">
-        <option value="bus">Bus ETA</option>
-        <option value="rssi">RSSI Radar</option>
-        <option value="stock">Stock</option>
-        <option value="weather">Weather</option>
-      </select>
-      <label data-i18n="lblTargetSsid">Target Wi-Fi SSID</label>
-      <input type="text" id="radarSsid" placeholder="DH">
-      <label data-i18n="lblTargetMac">Target MAC Address (選填)</label>
-      <input type="text" id="radarMac" placeholder="AA:BB:CC:DD:EE:FF" style="font-family:monospace;">
-      <button class="btn btn-secondary" id="btnScanWifi" type="button">📡 M5 WiFi Scan</button>
-      <label>Scan Results</label>
-      <select id="scanResults" disabled><option>— scan —</option></select>
-      <button class="btn btn-accent" id="btnSendRssi" type="button" data-i18n="sendRssi">📡 發送 RSSI 設定至 M5</button>
     </div>
   </div>
 
@@ -277,6 +251,9 @@
       <label data-i18n="wifiPass">WiFi 密碼</label>
       <input type="password" id="wifiPass" autocomplete="current-password">
       <button class="btn btn-success" id="btnSendWifi" type="button" data-i18n="sendWifi">📶 發送 WiFi 至 M5</button>
+      <button class="btn btn-secondary btn-sm" id="btnScanWifi" type="button">📡 M5 WiFi Scan</button>
+      <label>Scan Results</label>
+      <select id="scanResults" disabled><option>— scan —</option></select>
       <div class="action-row">
         <button class="btn btn-secondary btn-sm" id="btnRefreshEta" type="button" data-i18n="refreshEta">⟳ 刷新 ETA</button>
         <button class="btn btn-secondary btn-sm" id="btnReboot" type="button" data-i18n="reboot">↻ 重啟 M5</button>
@@ -300,14 +277,12 @@
 
 const I18N = {
   zh: {
-    title:'M5 匙扣 CRM 控制台', subtitle:'v6.0 · 巴士 · RSSI · 股票 · 天氣',
+    title:'M5 匙扣 CRM 控制台', subtitle:'v6.0 · 巴士 · 股票 · 天氣',
     mqttTitle:'MQTT 裝置連線', disconnected:'未連線', connected:'已連線', deviceId:'M5 裝置 ID (Device ID)',
     connect:'連線', disconnect:'中斷',
-    tabBus:'巴士 ETA', tabRssi:'RSSI 雷達', tabStock:'股票報價', tabWeather:'天氣預報', tabSettings:'系統設定',
+    tabBus:'巴士 ETA', tabStock:'股票報價', tabWeather:'天氣同步', tabSettings:'系統設定',
     busProfiles:'雙欄巴士 Profile 設定', profileName:'Profile 顯示名稱', colA:'左欄 A', colB:'右欄 B',
     syncRoutes:'🔄 同步路線', sendBus:'📡 發送 Profile 設定至 M5',
-    rssiTitle:'WiFi RSSI 雷達 Target', lblTargetSsid:'Target Wi-Fi SSID', lblTargetMac:'Target MAC Address (選填)',
-    sendRssi:'📡 發送 RSSI 設定至 M5',
     stockTitle:'港股 / 美股關注清單', fetchStock:'📈 抓取 Yahoo 並推送至 M5', autoStock:'自動 60 秒',
     weatherTitle:'香港天文台 HKO API 同步',
     weatherDesc:'由瀏覽器對接 HKO Open Data，清洗預報與警告後推送至 m5bus_<ID>/weather（retain: false）。',
@@ -318,14 +293,12 @@ const I18N = {
     logTitle:'同步記錄', logWait:'— 等待操作 —'
   },
   en: {
-    title:'M5 Keychain CRM Console', subtitle:'v6.0 · Bus · RSSI · Stock · Weather',
+    title:'M5 Keychain CRM Console', subtitle:'v6.0 · Bus · Stock · Weather',
     mqttTitle:'MQTT Connection', disconnected:'Offline', connected:'Online', deviceId:'Device ID',
     connect:'Connect', disconnect:'Disconnect',
-    tabBus:'Bus ETA', tabRssi:'RSSI Radar', tabStock:'Stocks', tabWeather:'Weather', tabSettings:'Settings',
+    tabBus:'Bus ETA', tabStock:'Stock Quote', tabWeather:'Weather Sync', tabSettings:'Settings',
     busProfiles:'Dual-Column Bus Profiles', profileName:'Profile Name', colA:'Column A', colB:'Column B',
     syncRoutes:'🔄 Sync routes', sendBus:'📡 Push Bus Profile to M5',
-    rssiTitle:'WiFi RSSI Radar Target', lblTargetSsid:'Target Wi-Fi SSID', lblTargetMac:'Target MAC (optional)',
-    sendRssi:'📡 Push RSSI Settings to M5',
     stockTitle:'HK / US Stock Watchlist', fetchStock:'📈 Fetch Yahoo & Push to M5', autoStock:'Auto 60s',
     weatherTitle:'HKO Open Data Sync',
     weatherDesc:'Fetches HKO warnings and 9-day forecast, then pushes to m5bus_<ID>/weather (retain: false).',
@@ -419,12 +392,13 @@ function busFw(b) { return {co:b.co||'KMB',route:b.route||'',stop:b.stopId||b.st
 function buildConfigPayload(activeModule) {
   saveProfileToDb();
   const db = loadDb();
+  const mod = activeModule || 'bus';
   const profileRows = db.profiles.map((pr, i) => ({
     id: i, name: pr.name, busA: busFw(pr.busA), busB: busFw(pr.busB)
   }));
   return {
     v: 6,
-    active_module: module,
+    active_module: mod,
     active_profile: db.activeProfile ?? 0,
     active_stock: 0,
     profiles: profileRows,
@@ -432,17 +406,12 @@ function buildConfigPayload(activeModule) {
       bright: Number($('bright').value),
       timeout: Number($('timeout').value),
       english: $('m5lang').value === '1',
-      app_mode: $('appMode').value,
+      app_mode: mod,
       wifi: { ssid: $('wifiSsid').value.trim(), password: $('wifiPass').value },
-      radar: { ssid: $('radarSsid').value.trim(), mac: $('radarMac').value.trim().toUpperCase() },
       stocks: db.stocks
     },
     modules: {
       bus: { active_profile: db.activeProfile ?? 0, profiles: profileRows },
-      rssi: {
-        radar_ssid: $('radarSsid').value.trim(),
-        radar_mac: $('radarMac').value.trim().toUpperCase()
-      },
       stock: { active_stock: 0, watchlist: db.stocks }
     }
   };
@@ -517,15 +486,10 @@ function connect() {
         if (lastStatus.settings.bright!=null) $('bright').value = String(lastStatus.settings.bright);
         if (lastStatus.settings.timeout!=null) $('timeout').value = String(lastStatus.settings.timeout);
         if (lastStatus.settings.english!=null) $('m5lang').value = lastStatus.settings.english?'1':'0';
-        if (lastStatus.settings.app_mode) $('appMode').value = lastStatus.settings.app_mode;
       }
       const pct = lastStatus.battery;
       const bb = $('batteryBadge');
       if (pct!=null && pct>=0) { bb.classList.remove('hidden'); $('batteryPct').textContent=`🔋 ${pct}%`; }
-      if (lastStatus.radar_rssi!=null) {
-        $('rssiLive').classList.remove('hidden');
-        $('rssiLive').textContent = `RSSI ${lastStatus.radar_rssi} dBm · ${lastStatus.radar_pct}%`;
-      }
       setLive(true, lastStatus.device||id);
     } catch { setLive(true,id); }
   });
@@ -767,7 +731,6 @@ function bindEvents() {
     $(s==='B'?'variantB':'variantA').onchange = () => loadStops(s);
   });
   $('btnSendBus').onclick = async () => { saveProfileToDb(); try{await pubConfig('bus');log(lang==='en'?'Bus config sent':'巴士設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
-  $('btnSendRssi').onclick = async () => { try{await pubConfig('rssi');log(lang==='en'?'RSSI config sent':'RSSI 設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
   $('btnSendWifi').onclick = async () => {
     const db = loadDb();
     db.config.wifiSsid = $('wifiSsid').value.trim();
@@ -791,8 +754,7 @@ function bindEvents() {
   $('scanResults').onchange = () => {
     const n = liveWifiNetworks[Number($('scanResults').value)];
     if (!n) return;
-    $('radarSsid').value = n.ssid || '';
-    $('radarMac').value = (n.bssid || '').toUpperCase();
+    $('wifiSsid').value = n.ssid || '';
   };
 }
 
