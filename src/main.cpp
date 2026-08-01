@@ -9,6 +9,7 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <time.h>
+#include <math.h>
 #include <qrcode.h>
 #include <M5Unified.h>
 
@@ -109,6 +110,7 @@ struct ForecastDay {
 struct WeatherState {
     bool has = false;
     int temp = 0, humidity = 0;
+    int icon = 50;
     int warnCount = 0;
     WeatherWarning warns[WARNING_MAX];
     int fcCount = 0;
@@ -199,6 +201,13 @@ static uint32_t computeFrameHash() {
     mix(g_stock.has ? 1u : 0u);
     if (g_stock.has) mix((uint32_t)(g_stock.price * 100));
     mix(g_weather.has ? 1u : 0u);
+    if (g_weather.has) {
+        mix((uint32_t)g_weather.temp);
+        mix((uint32_t)g_weather.humidity);
+        mix((uint32_t)g_weather.icon);
+        mix((uint32_t)g_weather.warnCount);
+        mix((uint32_t)g_weather.fcCount);
+    }
     mix((uint32_t)WiFi.status());
     mix(g_mqtt.connected() ? 1u : 0u);
     if (g_cfg.appMode == AppMode::Bus && g_ui == UiScreen::Module) {
@@ -346,7 +355,73 @@ static void drawBusStatusChrome(M5Canvas& c) {
 }
 
 static void drawModuleStatusChrome(M5Canvas& c) {
-    c.fillCircle(8, 10, 3, connectionStatusColor());
+    c.fillCircle(8, 8, 3, connectionStatusColor());
+}
+
+static void drawModuleFooterBar(M5Canvas& c, const char* zh, const char* en) {
+    c.fillRect(0, 113, LAND_W, 22, C_DARKGREY);
+    drawMc(c, g_cfg.english ? &fonts::Font0 : &fonts::efontTW_12,
+           g_cfg.english ? en : zh, LAND_W / 2, 122, C_GOLD);
+}
+
+static bool weatherIsRainy(int icon, const char* desc, int psr) {
+    if (psr >= 50) return true;
+    if (icon >= 63 && icon <= 82) return true;
+    if (desc && desc[0]) {
+        if (strstr(desc, "\xe9\x9b\xa8")) return true;
+        if (strstr(desc, "rain") || strstr(desc, "Rain")) return true;
+    }
+    return false;
+}
+
+static void drawSunGraphic(M5Canvas& c, int cx, int cy) {
+    const int r = 14;
+    c.fillCircle(cx, cy, r, TFT_YELLOW);
+    for (int a = 0; a < 360; a += 45) {
+        float rad = a * 3.14159265f / 180.0f;
+        int x0 = cx + (int)(cosf(rad) * (r + 3));
+        int y0 = cy + (int)(sinf(rad) * (r + 3));
+        int x1 = cx + (int)(cosf(rad) * (r + 9));
+        int y1 = cy + (int)(sinf(rad) * (r + 9));
+        c.drawLine(x0, y0, x1, y1, TFT_YELLOW);
+    }
+}
+
+static void drawRainGraphic(M5Canvas& c, int cx, int cy) {
+    const uint16_t cloud = 0x7BEF;
+    c.fillCircle(cx - 10, cy - 2, 9, cloud);
+    c.fillCircle(cx + 8, cy - 2, 11, cloud);
+    c.fillRect(cx - 18, cy - 2, 36, 12, cloud);
+    for (int i = -12; i <= 12; i += 6) {
+        c.drawLine(cx + i, cy + 14, cx + i - 2, cy + 24, TFT_CYAN);
+        c.drawLine(cx + i + 1, cy + 16, cx + i - 1, cy + 26, TFT_CYAN);
+    }
+}
+
+static uint16_t warnBoxColor(const char* name) {
+    if (!name || !name[0]) return C_WARN_BG;
+    if (strstr(name, "\xe9\xbb\x91") || strstr(name, "Black") || strstr(name, "BLACK"))
+        return TFT_RED;
+    if (strstr(name, "\xe5\x85\xab") || strstr(name, "TC8") || strstr(name, "T8"))
+        return TFT_YELLOW;
+    return C_WARN_BG;
+}
+
+static uint16_t warnTextColor(uint16_t bg) {
+    return (bg == TFT_RED || bg == TFT_YELLOW) ? TFT_BLACK : C_WARN_FG;
+}
+
+static void drawDashedHLine(M5Canvas& c, int x0, int x1, int y, uint16_t col) {
+    if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
+    for (int x = x0; x <= x1; x += 5)
+        c.drawFastHLine(x, y, min(3, x1 - x + 1), col);
+}
+
+static const char* forecastMark(int psr, const char* desc) {
+    if (psr >= 70) return "R";
+    if (psr >= 40) return "~";
+    if (desc && strstr(desc, "\xe9\x9b\xa8")) return "R";
+    return "*";
 }
 
 static uint16_t carouselStatusColor() {
@@ -642,6 +717,7 @@ static void applyWeather(const char* json, size_t len) {
     g_weather.has = true;
     g_weather.temp = g_jsonDoc["current"]["temp"] | 25;
     g_weather.humidity = g_jsonDoc["current"]["humidity"] | 70;
+    g_weather.icon = g_jsonDoc["current"]["icon"] | 50;
     g_weather.warnCount = 0;
     JsonArrayConst warns = g_jsonDoc["warnings"].as<JsonArrayConst>();
     if (!warns.isNull()) {
@@ -941,78 +1017,81 @@ public:
         (void)h;
         c.fillSprite(C_BG);
         drawModuleStatusChrome(c);
-        c.fillRect(0, 114, w, 21, C_DARKGREY);
+        drawModuleFooterBar(c,
+            "[\xe8\x97\x8d\xe6\x91\x83] \xe5\x88\x87\xe6\x8f\x9b\xe8\x82\xa1\xe7\xa5\xa8 | [\xe5\x81\xb4\xe6\x91\x83] \xe9\x81\xb8\xe5\x96\xae",
+            "[A] Next Stock | [B] Menu");
 
         if (!g_stock.has) {
-            drawCenteredText(c, w, 62,
-                g_cfg.english ? "Awaiting stock MQTT..." : "\xe7\xad\x89\xe5\xbe\x85\xe8\x82\xa1\xe7\xa5\xa8 MQTT...",
-                C_DIM);
-            drawCenteredText(c, w, 122,
-                g_cfg.english ? "[A] Next Stock | [B] Menu"
-                              : "[\xe8\x97\x8d\xe6\x91\x83] \xe5\x88\x87\xe6\x8f\x9b\xe8\x82\xa1\xe7\xa5\xa8 | [\xe5\x81\xb4\xe6\x91\x83] \xe9\x81\xb8\xe5\x96\xae",
-                C_DIM);
+            drawMc(c, g_cfg.english ? &fonts::Font2 : &fonts::efontTW_16,
+                   g_cfg.english ? "Awaiting stock MQTT..." : "\xe7\xad\x89\xe5\xbe\x85\xe8\x82\xa1\xe7\xa5\xa8 MQTT...",
+                   60, 58, C_DIM);
             return;
         }
 
         const bool up = g_stock.change >= 0;
-        const uint16_t tc = up ? C_GREEN : C_RED;
-
-        c.setFont(&fonts::Font0);
-        c.setTextSize(1);
-        c.setTextColor(C_FG);
-        c.setCursor(4, 20);
-        c.print(g_stock.symbol);
-        c.setTextColor(C_DIM);
-        c.setCursor(4, 32);
-        c.print(g_stock.name);
+        const uint16_t badgeCol = up ? C_GREEN : C_RED;
 
         c.setFont(&fonts::Font2);
-        c.setTextColor(C_FG);
-        c.setCursor(4, 54);
-        c.printf("$%.2f", g_stock.price);
-
-        c.fillCircle(10, 84, 6, tc);
+        c.setTextColor(TFT_WHITE);
+        c.setTextDatum(textdatum_t::top_left);
+        c.drawString(g_stock.symbol, 10, 22);
         c.setFont(&fonts::Font0);
         c.setTextSize(1);
-        c.setTextColor(tc);
-        c.setCursor(22, 78);
-        c.printf("%+.2f", g_stock.change);
-        c.setCursor(22, 90);
-        c.printf("%+.1f%%", g_stock.changePct);
+        c.setTextColor(C_DIM);
+        c.drawString(g_stock.name, 10, 38);
+        c.setTextDatum(textdatum_t::top_left);
 
-        c.drawRect(115, 20, 121, 88, C_DARKGREY);
-        drawProfessionalWaveChart(c, 118, 23, 115, 82, tc);
+        char priceBuf[20];
+        snprintf(priceBuf, sizeof(priceBuf), "$%.2f", g_stock.price);
+        c.setFont(&fonts::Font4);
+        c.setTextColor(TFT_WHITE);
+        c.setTextDatum(textdatum_t::top_left);
+        c.drawString(priceBuf, 10, 52);
+        c.setTextDatum(textdatum_t::top_left);
 
-        drawCenteredText(c, w, 122,
-            g_cfg.english ? "[A] Next Stock | [B] Menu"
-                          : "[\xe8\x97\x8d\xe6\x91\x83] \xe5\x88\x87\xe6\x8f\x9b\xe8\x82\xa1\xe7\xa5\xa8 | [\xe5\x81\xb4\xe6\x91\x83] \xe9\x81\xb8\xe5\x96\xae",
-            C_DIM);
+        char pctBuf[16];
+        snprintf(pctBuf, sizeof(pctBuf), "%+.1f%%", g_stock.changePct);
+        c.fillRoundRect(10, 82, 96, 22, 4, badgeCol);
+        drawMc(c, &fonts::Font2, pctBuf, 58, 93, TFT_WHITE);
+
+        c.drawFastVLine(118, 18, 92, C_DARKGREY);
+        drawTrendChart(c, 122, 22, 106, 86, badgeCol);
     }
 
 private:
-    void drawProfessionalWaveChart(M5Canvas& c, int x, int y, int w, int h, uint16_t col) {
+    void drawTrendChart(M5Canvas& c, int x, int y, int w, int h, uint16_t col) {
         if (g_stock.histCount < 2) return;
         float minV = g_stock.hist[0], maxV = g_stock.hist[0];
         for (int i = 1; i < g_stock.histCount; ++i) {
             minV = min(minV, g_stock.hist[i]);
             maxV = max(maxV, g_stock.hist[i]);
         }
-        if (g_stock.prevClose > 0) { minV = min(minV, g_stock.prevClose); maxV = max(maxV, g_stock.prevClose); }
-        const float range = max(maxV - minV, 0.01f);
         if (g_stock.prevClose > 0) {
-            int baseY = y + h - (int)((g_stock.prevClose - minV) / range * (h - 4));
-            for (int dx = x; dx < x + w; dx += 3)
-                if (((dx - x) / 3) % 2 == 0) c.drawPixel(dx, baseY, C_DIM);
+            minV = min(minV, g_stock.prevClose);
+            maxV = max(maxV, g_stock.prevClose);
         }
-        int px = x, py = y + h;
+        const float range = max(maxV - minV, 0.01f);
+
+        if (g_stock.prevClose > 0) {
+            int baseY = y + h - 2 - (int)((g_stock.prevClose - minV) / range * (h - 6));
+            drawDashedHLine(c, x + 2, x + w - 2, baseY, C_DIM);
+        }
+
+        int px = -1, py = -1;
         for (int i = 0; i < g_stock.histCount; ++i) {
-            int cx = x + (i * (w - 1)) / max(1, g_stock.histCount - 1);
-            int cy = y + h - (int)((g_stock.hist[i] - minV) / range * (h - 4));
-            if (i > 0) c.drawLine(px, py, cx, cy, col);
-            px = cx; py = cy;
+            int cx = x + 2 + (i * (w - 5)) / max(1, g_stock.histCount - 1);
+            int cy = y + h - 2 - (int)((g_stock.hist[i] - minV) / range * (h - 6));
+            if (px >= 0) {
+                c.drawLine(px, py, cx, cy, col);
+                c.drawLine(px, py + 1, cx, cy + 1, col);
+            }
+            px = cx;
+            py = cy;
         }
-        c.fillCircle(px, py, 3, col);
-        c.drawCircle(px, py, 4, C_FG);
+        if (px >= 0) {
+            c.fillCircle(px, py, 3, col);
+            c.drawCircle(px, py, 4, TFT_WHITE);
+        }
     }
 };
 
@@ -1029,71 +1108,104 @@ public:
 
     void render(M5Canvas& c, int w, int h) override {
         (void)w;
+        (void)h;
         c.fillSprite(C_BG);
         drawModuleStatusChrome(c);
-        c.setTextColor(C_CYAN);
-        c.setTextSize(1);
-        c.setCursor(20, 4);
-        c.print(g_cfg.english ? "HKO Weather" : "天文台天氣");
+
         if (!g_weather.has) {
-            c.setTextColor(C_DIM);
-            c.setCursor(4, 48);
-            c.print(g_cfg.english ? "Awaiting weather MQTT..." : "等待天氣 MQTT...");
-            c.setCursor(4, h - 10);
-            c.print(g_cfg.english ? "A:9-Day  B:Menu" : "A:九天 B:選單");
+            drawModuleFooterBar(c,
+                "[\xe8\x97\x8d\xe6\x91\x83] \xe4\xb9\x9d\xe6\x97\xa5\xe9\xa0\x90\xe5\xa0\xb1 | [\xe5\x81\xb4\xe6\x91\x83] \xe9\x81\xb8\xe5\x96\xae",
+                "[A] 9-Day | [B] Menu");
+            drawMc(c, g_cfg.english ? &fonts::Font2 : &fonts::efontTW_16,
+                   g_cfg.english ? "Awaiting weather MQTT..." : "\xe7\xad\x89\xe5\xbe\x85\xe5\xa4\xa9\xe6\xb0\xa3 MQTT...",
+                   120, 58, C_DIM);
             return;
         }
-        c.setTextColor(C_FG);
-        c.setCursor(4, 18);
-        c.printf("%d C  %d%% RH", g_weather.temp, g_weather.humidity);
-        int y = 34;
+
         if (!g_weatherForecastView) {
-            c.setTextColor(C_AMBER);
-            c.setCursor(4, y);
-            c.print(g_cfg.english ? "Warnings" : "警告");
-            y += 12;
-            if (!g_weather.warnCount) {
-                c.setTextColor(C_GREEN);
-                c.setCursor(8, y);
-                c.print(g_cfg.english ? "None" : "無");
-            } else {
-                for (int i = 0; i < g_weather.warnCount && y < h - 20; ++i) {
-                    c.fillRoundRect(4, y, LAND_W - 8, 14, 2, C_WARN_BG);
-                    c.setTextColor(C_WARN_FG);
-                    c.setCursor(8, y + 3);
-                    c.printf("%s %s", g_weather.warns[i].code, g_weather.warns[i].name);
-                    y += 16;
-                }
-            }
+            renderLiveView(c);
+            drawModuleFooterBar(c,
+                "[\xe8\x97\x8d\xe6\x91\x83] \xe4\xb9\x9d\xe6\x97\xa5\xe9\xa0\x90\xe5\xa0\xb1 | [\xe5\x81\xb4\xe6\x91\x83] \xe9\x81\xb8\xe5\x96\xae",
+                "[A] 9-Day Forecast | [B] Menu");
         } else {
-            c.setTextColor(C_AMBER);
-            c.setCursor(4, y);
-            c.print(g_cfg.english ? "9-Day Forecast" : "九天預報");
-            y += 12;
-            for (int i = 0; i < g_weather.fcCount && y < h - 12; ++i) {
-                const auto& d = g_weather.fc[i];
-                c.setTextColor(C_FG);
-                c.setCursor(4, y);
-                c.printf("%s %s %d-%d", d.date, d.week, d.minT, d.maxT);
-                if (d.psr > 0) {
-                    c.setTextColor(C_CYAN);
-                    c.printf(" PSR%d%%", d.psr);
-                }
-                y += 11;
-                if (d.desc[0]) {
-                    c.setCursor(8, y);
-                    c.setTextColor(C_DIM);
-                    c.print(d.desc);
-                    y += 11;
-                }
-            }
+            renderForecastView(c);
+            drawModuleFooterBar(c,
+                "[\xe8\x97\x8d\xe6\x91\x83] \xe8\xbf\x94\xe5\x8d\xb3\xe6\x99\x82 | [\xe5\x81\xb4\xe6\x91\x83] \xe9\x81\xb8\xe5\x96\xae",
+                "[A] Live View | [B] Menu");
         }
-        c.setTextColor(C_DIM);
-        c.setCursor(4, h - 10);
-        if (!g_weatherForecastView)
-            c.print(g_cfg.english ? "A:9-Day  B:Menu" : "A:九天 B:選單");
+    }
+
+private:
+    void renderLiveView(M5Canvas& c) {
+        if (g_cfg.english) {
+            c.setFont(&fonts::Font2);
+            c.setTextColor(C_CYAN);
+            c.setTextDatum(textdatum_t::top_left);
+            c.drawString("Weather", 20, 6);
+        } else {
+            drawMc(c, &fonts::efontTW_16, "\xe5\xa4\xa9\xe6\xb0\xa3", 28, 10, C_CYAN);
+        }
+
+        char humBuf[12];
+        snprintf(humBuf, sizeof(humBuf), "[%d%%]", g_weather.humidity);
+        drawRightText(c, 232, 6, humBuf, C_CYAN);
+
+        const char* desc = (g_weather.fcCount > 0) ? g_weather.fc[0].desc : "";
+        const int psr = (g_weather.fcCount > 0) ? g_weather.fc[0].psr : 0;
+        if (weatherIsRainy(g_weather.icon, desc, psr))
+            drawRainGraphic(c, 48, 62);
         else
-            c.print(g_cfg.english ? "A:Live  B:Menu" : "A:即時 B:選單");
+            drawSunGraphic(c, 48, 62);
+
+        char tempBuf[12];
+        snprintf(tempBuf, sizeof(tempBuf), "%d\xB0""C", g_weather.temp);
+        drawMc(c, &fonts::Font4, tempBuf, 130, 62, TFT_WHITE);
+
+        if (g_weather.warnCount > 0) {
+            const auto& w0 = g_weather.warns[0];
+            uint16_t bg = warnBoxColor(w0.name);
+            uint16_t fg = warnTextColor(bg);
+            c.fillRoundRect(8, 88, LAND_W - 16, 22, 4, bg);
+            char warnLine[48];
+            snprintf(warnLine, sizeof(warnLine), "%s %s", w0.code, w0.name);
+            drawMc(c, g_cfg.english ? &fonts::Font0 : &fonts::efontTW_12,
+                   warnLine, LAND_W / 2, 99, fg);
+        } else {
+            c.fillRoundRect(8, 88, LAND_W - 16, 22, 4, 0x0320);
+            drawMc(c, g_cfg.english ? &fonts::Font0 : &fonts::efontTW_12,
+                   g_cfg.english ? "No active warnings" : "\xe7\x84\xa1\xe6\xb4\xbb\xe5\x8b\x95\xe8\xad\xa6\xe5\x91\x8a",
+                   LAND_W / 2, 99, C_GREEN);
+        }
+    }
+
+    void renderForecastView(M5Canvas& c) {
+        char header[48];
+        snprintf(header, sizeof(header), g_cfg.english
+            ? "9-Day Trend [%d%%]"
+            : "\xe4\xb9\x9d\xe6\x97\xa5\xe9\xa0\x90\xe5\xa0\xb1 [%d%%]",
+            g_weather.humidity);
+        drawMc(c, g_cfg.english ? &fonts::Font0 : &fonts::efontTW_12,
+               header, LAND_W / 2, 10, C_CYAN);
+
+        const int rows = min(4, g_weather.fcCount);
+        for (int i = 0; i < rows; ++i) {
+            const auto& d = g_weather.fc[i];
+            char line[56];
+            snprintf(line, sizeof(line), "%s (%s)  %d-%d\xB0""C  %s  %d%%",
+                     d.date, d.week, d.minT, d.maxT,
+                     forecastMark(d.psr, d.desc), d.psr);
+            const int rowY = 26 + i * 20;
+            if (g_cfg.english)
+                drawMc(c, &fonts::Font0, line, LAND_W / 2, rowY + 6, TFT_WHITE);
+            else
+                drawMc(c, &fonts::efontTW_12, line, LAND_W / 2, rowY + 6, TFT_WHITE);
+        }
+
+        if (rows == 0) {
+            drawMc(c, g_cfg.english ? &fonts::Font0 : &fonts::efontTW_12,
+                   g_cfg.english ? "No forecast data" : "\xe7\x84\xa1\xe9\xa0\x90\xe6\x8a\xa5\xe6\x95\xb8\xe6\x93\x9a",
+                   LAND_W / 2, 58, C_DIM);
+        }
     }
 };
 
