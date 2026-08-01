@@ -33,7 +33,7 @@ static constexpr uint32_t LONG_PRESS_MS = 1500;
 static constexpr uint8_t MULTI_CLICK_TARGET = 5;
 static constexpr int PROFILE_COUNT = 4;
 static constexpr int STOCK_SLOTS = 4;
-static constexpr int CAROUSEL_CARDS = 7;
+static constexpr int CAROUSEL_CARDS = 6;
 static constexpr int STOCK_HISTORY_MAX = 48;
 static constexpr int FORECAST_MAX = 9;
 static constexpr int WARNING_MAX = 8;
@@ -138,6 +138,7 @@ static PubSubClient g_mqtt(g_wifiClient);
 static M5Canvas g_canvas(&M5.Display);
 
 static const uint16_t C_DARKGREY = 0x4208;
+static const uint16_t C_GOLD = 0xFEA0;
 
 static UiScreen g_ui = UiScreen::Module;
 static int g_menuCardIdx = 0;
@@ -194,6 +195,8 @@ static uint32_t computeFrameHash() {
     mix(g_stock.has ? 1u : 0u);
     if (g_stock.has) mix((uint32_t)(g_stock.price * 100));
     mix(g_weather.has ? 1u : 0u);
+    mix((uint32_t)WiFi.status());
+    mix(g_mqtt.connected() ? 1u : 0u);
     if (g_cfg.appMode == AppMode::Bus && g_ui == UiScreen::Module) {
         for (int i = 0; i < ETA_SLOTS; ++i) {
             mix((uint32_t)g_colA.slots[i].minutes);
@@ -286,19 +289,16 @@ static int batteryPct() {
     return constrain(p, 0, 100);
 }
 
-static bool g_spriteLandscape = false;
+static bool g_spriteReady = false;
 
-static void ensureSpriteLayout(bool landscape) {
-    const int rot = landscape ? 1 : 2;
-    const int w = landscape ? LAND_W : PORTRAIT_W;
-    const int h = landscape ? LAND_H : PORTRAIT_H;
-    M5.Display.setRotation(rot);
-    if (!g_canvas.getBuffer() || g_spriteLandscape != landscape ||
-        g_canvas.width() != w || g_canvas.height() != h) {
+static void ensureSpriteLayout() {
+    M5.Display.setRotation(1);
+    if (!g_spriteReady || !g_canvas.getBuffer() ||
+        g_canvas.width() != LAND_W || g_canvas.height() != LAND_H) {
         if (g_canvas.getBuffer()) g_canvas.deleteSprite();
         g_canvas.setColorDepth(16);
-        g_canvas.createSprite(w, h);
-        g_spriteLandscape = landscape;
+        g_canvas.createSprite(LAND_W, LAND_H);
+        g_spriteReady = true;
     }
 }
 
@@ -319,17 +319,30 @@ static void drawCenteredEfont(M5Canvas& c, int w, int y, const char* text, uint1
     c.print(text);
 }
 
-static void drawRightEfont(M5Canvas& c, int rightX, int y, const char* text, uint16_t col) {
-    c.setFont(&fonts::efontTW_12);
+static void drawRightText(M5Canvas& c, int rightX, int y, const char* text, uint16_t col) {
+    c.setFont(&fonts::Font0);
+    c.setTextSize(1);
     c.setTextColor(col);
-    int tw = c.textWidth(text);
-    c.setCursor(rightX - tw, y);
-    c.print(text);
+    c.setTextDatum(textdatum_t::top_right);
+    c.drawString(text, rightX, y);
+    c.setTextDatum(textdatum_t::top_left);
 }
 
-static bool frameIsLandscape() {
-    if (g_ui == UiScreen::Carousel || g_ui == UiScreen::QrCode) return false;
-    return g_cfg.appMode == AppMode::Bus || g_cfg.appMode == AppMode::Stock;
+static uint16_t connectionStatusColor() {
+    if (WiFi.status() != WL_CONNECTED) return TFT_RED;
+    if (g_mqtt.connected()) return TFT_GREEN;
+    return TFT_YELLOW;
+}
+
+static void drawBusStatusChrome(M5Canvas& c) {
+    c.fillCircle(8, 10, 3, connectionStatusColor());
+    char prof[8];
+    snprintf(prof, sizeof(prof), "P%d", g_activeProfile + 1);
+    drawRightText(c, 232, 4, prof, C_DIM);
+}
+
+static uint16_t carouselStatusColor() {
+    return (WiFi.status() == WL_CONNECTED && g_mqtt.connected()) ? TFT_GREEN : TFT_RED;
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +420,23 @@ static void readBus(JsonObjectConst o, BusStopCfg& b) {
     if (o["dest"].is<const char*>()) strlcpy(b.dest, o["dest"], sizeof(b.dest));
 }
 
+static void applyBusLive(JsonObjectConst o, BusColState& col, BusStopCfg& cfg) {
+    readBus(o, cfg);
+    if (o["route"].is<const char*>()) strlcpy(col.route, o["route"], sizeof(col.route));
+    else if (cfg.route[0]) strlcpy(col.route, cfg.route, sizeof(col.route));
+    const char* nm = o["name"] | cfg.name;
+    if (nm && nm[0]) strlcpy(col.stop, nm, sizeof(col.stop));
+    memset(col.slots, 0, sizeof(col.slots));
+    if (o["eta"].is<int>()) {
+        int m = o["eta"].as<int>();
+        if (m < 0) m = 0;
+        col.slots[0].minutes = m;
+        col.slots[0].valid = true;
+        col.ok = true;
+        g_frameDirty = true;
+    }
+}
+
 static void applyBusProfiles(JsonArrayConst arr) {
     int i = 0;
     for (JsonObjectConst p : arr) {
@@ -457,8 +487,10 @@ static void applyConfig(const char* json, size_t len) {
         }
     }
 
-    if (g_jsonDoc["busA"].is<JsonObjectConst>()) readBus(g_jsonDoc["busA"], g_profiles[g_activeProfile].busA);
-    if (g_jsonDoc["busB"].is<JsonObjectConst>()) readBus(g_jsonDoc["busB"], g_profiles[g_activeProfile].busB);
+    if (g_jsonDoc["busA"].is<JsonObjectConst>())
+        applyBusLive(g_jsonDoc["busA"], g_colA, g_profiles[g_activeProfile].busA);
+    if (g_jsonDoc["busB"].is<JsonObjectConst>())
+        applyBusLive(g_jsonDoc["busB"], g_colB, g_profiles[g_activeProfile].busB);
 
     JsonObjectConst st = g_jsonDoc["settings"];
     if (!st.isNull()) {
@@ -491,6 +523,10 @@ static void loadNvs() {
         strlcpy(g_profiles[0].busB.dest, g_profiles[0].busB.name, sizeof(g_profiles[0].busB.dest));
         strlcpy(g_cfg.stocks[0].symbol, "0700.HK", sizeof(g_cfg.stocks[0].symbol));
         strlcpy(g_cfg.stocks[0].name, "Tencent", sizeof(g_cfg.stocks[0].name));
+    }
+    if (!g_cfg.wifi.ssid[0]) {
+        strlcpy(g_cfg.wifi.ssid, "DH", sizeof(g_cfg.wifi.ssid));
+        strlcpy(g_cfg.wifi.password, "66764326", sizeof(g_cfg.wifi.password));
     }
 }
 
@@ -551,12 +587,12 @@ static void etaTick() {
     if (g_etaStep == 0 && millis() - g_lastEta < ETA_REFRESH_MS) return;
     if (g_etaStep == 0) g_etaStep = 1;
     if (g_etaStep == 1) {
-        fetchCol(g_profiles[g_activeProfile].busA, g_colA);
+        if (!g_colA.ok) fetchCol(g_profiles[g_activeProfile].busA, g_colA);
         g_etaStep = 2;
         return;
     }
     if (g_etaStep == 2) {
-        fetchCol(g_profiles[g_activeProfile].busB, g_colB);
+        if (!g_colB.ok) fetchCol(g_profiles[g_activeProfile].busB, g_colB);
         g_etaStep = 0;
         g_lastEta = millis();
         g_bootTasksDone = true;
@@ -660,14 +696,14 @@ static void publishState() {
     settings["timeout"] = g_cfg.timeout;
     settings["english"] = g_cfg.english;
     settings["app_mode"] = modeStr(g_cfg.appMode);
-    auto wb = [&](const char* k, const BusStopCfg& b) {
+    auto wb = [&](const char* k, const BusStopCfg& b, const BusColState& col) {
         JsonObject o = g_jsonDoc[k].to<JsonObject>();
-        o["co"] = b.co; o["route"] = b.route; o["stop"] = b.stop;
-        o["name"] = b.name;
-        o["dest"] = b.dest;
+        o["co"] = b.co; o["route"] = col.route[0] ? col.route : b.route;
+        o["stop"] = b.stop; o["name"] = col.stop[0] ? col.stop : b.name;
+        if (col.slots[0].valid) o["eta"] = col.slots[0].minutes;
     };
-    wb("busA", g_profiles[g_activeProfile].busA);
-    wb("busB", g_profiles[g_activeProfile].busB);
+    wb("busA", g_profiles[g_activeProfile].busA, g_colA);
+    wb("busB", g_profiles[g_activeProfile].busB, g_colB);
     if (g_lastAction[0]) {
         g_jsonDoc["last_action"] = g_lastAction;
         g_jsonDoc["last_action_seq"] = g_lastActionSeq;
@@ -710,7 +746,7 @@ static void mqttCallback(char* tpc, byte* payload, unsigned int len) {
 static void mqttConnect() {
     static bool configReqSent = false;
     if (!g_mqtt.connected()) {
-        configReqSent = false;
+        g_mqttOk = false;
         String cid = "m5-" + g_deviceId;
         if (g_mqtt.connect(cid.c_str())) {
             g_mqtt.subscribe(topic("config").c_str());
@@ -743,8 +779,6 @@ public:
     virtual void onBtnALongPress() {}
     virtual void onBtnBPress() {}
     virtual void onExit() {}
-    virtual bool forcePortrait() const { return false; }
-    virtual bool forceLandscape() const { return false; }
 };
 
 // ---------------------------------------------------------------------------
@@ -753,7 +787,6 @@ public:
 class BusModule : public AppModule {
 public:
     const char* id() const override { return "bus"; }
-    bool forceLandscape() const override { return true; }
 
     void onLoop() override {
         etaTick();
@@ -770,6 +803,7 @@ public:
         (void)w;
         (void)h;
         c.fillSprite(C_BG);
+        drawBusStatusChrome(c);
         drawCol(c, BUS_COL_A_X, g_colA, g_profiles[g_activeProfile].busA);
         drawCol(c, BUS_COL_B_X, g_colB, g_profiles[g_activeProfile].busB);
     }
@@ -785,11 +819,9 @@ private:
     }
 
     static const char* resolveDest(const BusColState& col, const BusStopCfg& cfg, char* buf, size_t n) {
-        if (cfg.dest[0]) return cfg.dest;
-        for (int i = 0; i < ETA_SLOTS; ++i) {
-            if (col.slots[i].valid && col.slots[i].dest[0]) return col.slots[i].dest;
-        }
         if (cfg.name[0]) return cfg.name;
+        if (col.stop[0]) return col.stop;
+        if (cfg.dest[0]) return cfg.dest;
         shortenLabel(buf, n, col.stop);
         return buf;
     }
@@ -840,7 +872,6 @@ private:
 class StockModule : public AppModule {
 public:
     const char* id() const override { return "stock"; }
-    bool forceLandscape() const override { return true; }
 
     void onBtnAPress() override {
         for (int n = 0; n < STOCK_SLOTS; ++n) {
@@ -939,7 +970,6 @@ private:
 class WeatherModule : public AppModule {
 public:
     const char* id() const override { return "weather"; }
-    bool forcePortrait() const override { return true; }
 
     void onBtnAPress() override { g_weatherForecastView = !g_weatherForecastView; }
 
@@ -1021,11 +1051,21 @@ static AppModule* modFor(AppMode m) {
 }
 
 // ---------------------------------------------------------------------------
-// Carousel Menu (7 cards, portrait)
+// Carousel Menu (6 cards, landscape 240x135)
 // ---------------------------------------------------------------------------
 static const char* cardTitle(int i, bool en) {
-    static const char* zh[] = {"目前模組","巴士 Profile","螢幕亮度","休眠時間","顯示語言","配對 QR","儲存離開"};
-    static const char* enT[] = {"Active App","Bus Profile","Brightness","Sleep Timeout","Language","Pair QR","Save & Exit"};
+    static const char* zh[] = {
+        "\xf0\x9f\x9a\x80 \xe7\x95\xb6\xe5\x89\x8d App",
+        "\xf0\x9f\x9a\x8c Bus Profile",
+        "\xf0\x9f\x92\xa1 \xe8\x9e\xa2\xe5\xb9\x95\xe4\xba\xae\xe5\xba\xa6",
+        "\xf0\x9f\x92\xa4 \xe4\xbc\x91\xe7\x9c\xa0\xe6\x99\x82\xe9\x96\x93",
+        "\xf0\x9f\x8c\x90 \xe4\xbb\x8b\xe9\x9d\xa2\xe8\xaa\x9e\xe8\xa8\x80",
+        "\xf0\x9f\x92\xbe \xe5\x84\xb2\xe5\xad\x98\xe9\x80\x80\xe5\x87\xba"
+    };
+    static const char* enT[] = {
+        "Current App", "Bus Profile", "Brightness",
+        "Sleep Timeout", "Language", "Save & Exit"
+    };
     return en ? enT[i] : zh[i];
 }
 
@@ -1045,21 +1085,24 @@ static void adjustCarousel() {
         case 2: g_cfg.bright = (g_cfg.bright + 1) % 4; M5.Display.setBrightness(brightVal()); break;
         case 3: g_cfg.timeout = (g_cfg.timeout + 1) % 4; break;
         case 4: g_cfg.english = !g_cfg.english; break;
-        case 5: g_ui = UiScreen::QrCode; return;
-        case 6: saveNvs(); g_ui = UiScreen::Module; return;
+        case 5: saveNvs(); g_ui = UiScreen::Module; g_frameDirty = true; return;
     }
     saveNvs();
+    g_frameDirty = true;
 }
 
-static void cardValue(M5Canvas& c, int idx, int cardW) {
-    char buf[32];
+static void cardValueLandscape(M5Canvas& c, int idx) {
+    char buf[48];
     uint16_t col = C_CYAN;
+    const lgfx::IFont* font = &fonts::Font4;
+
     switch (idx) {
         case 0:
             snprintf(buf, sizeof(buf), "%s", modeLabel(g_cfg.appMode));
             break;
         case 1:
-            snprintf(buf, sizeof(buf), "P%d", g_activeProfile + 1);
+            snprintf(buf, sizeof(buf), "P%d %s", g_activeProfile + 1, g_profiles[g_activeProfile].name);
+            if (!g_cfg.english) font = &fonts::efontTW_16;
             break;
         case 2:
             snprintf(buf, sizeof(buf), "%d%%", (g_cfg.bright + 1) * 25);
@@ -1070,75 +1113,74 @@ static void cardValue(M5Canvas& c, int idx, int cardW) {
             break;
         }
         case 4:
-            snprintf(buf, sizeof(buf), "%s", g_cfg.english ? "EN" : "\xe4\xb8\xad");
+            if (g_cfg.english) snprintf(buf, sizeof(buf), "English");
+            else {
+                snprintf(buf, sizeof(buf), "%s", "\xe7\xb9\x81\xe9\xab\x94\xe4\xb8\xad\xe6\x96\x87");
+                font = &fonts::efontTW_16;
+            }
             break;
         case 5:
-            snprintf(buf, sizeof(buf), "QR");
-            col = C_AMBER;
-            break;
-        case 6:
-            snprintf(buf, sizeof(buf), "OK");
+            snprintf(buf, sizeof(buf), "%s", g_cfg.english ? "SAVE" : "OK");
             col = C_GREEN;
             break;
         default:
             buf[0] = '\0';
             break;
     }
-    c.setFont(&fonts::Font4);
-    c.setTextColor(col);
-    int tw = c.textWidth(buf);
-    c.setCursor((cardW - tw) / 2 + 6, 100);
-    c.print(buf);
-    c.setFont(&fonts::Font0);
+    drawMc(c, font, buf, 120, 75, col);
 }
 
 static void renderCarousel(M5Canvas& c, int w, int h) {
     (void)w;
+    (void)h;
     c.fillSprite(C_BG);
+
+    c.fillCircle(8, 10, 3, carouselStatusColor());
+
+    char header[20];
+    snprintf(header, sizeof(header), "MENU (%d/%d)", g_menuCardIdx + 1, CAROUSEL_CARDS);
+    drawRightText(c, 232, 6, header, C_DIM);
+
+    c.drawRoundRect(10, 22, 220, 92, 8, TFT_CYAN);
+
+    const char* title = cardTitle(g_menuCardIdx, g_cfg.english);
+    if (g_cfg.english)
+        drawMc(c, &fonts::Font2, title, 120, 40, C_FG);
+    else
+        drawMc(c, &fonts::efontTW_16, title, 120, 40, C_FG);
+
+    cardValueLandscape(c, g_menuCardIdx);
 
     c.setFont(&fonts::Font0);
     c.setTextSize(1);
-    c.setTextColor(C_AMBER);
-    c.setCursor(8, 8);
-    c.printf("MENU (%d/%d)", g_menuCardIdx + 1, CAROUSEL_CARDS);
-
-    c.drawRoundRect(6, 28, 123, 160, 8, TFT_CYAN);
-
-    c.setTextColor(C_FG);
-    c.setCursor(12, 45);
-    c.print(cardTitle(g_menuCardIdx, g_cfg.english));
-
-    cardValue(c, g_menuCardIdx, w);
-
-    c.setTextColor(C_DIM);
-    c.setCursor(8, 210);
-    c.print(g_cfg.english ? "[A] Change | [B] Next" : "[A] \xe8\xaa\xbf\xe6\x95\xb4 | [B] \xe4\xb8\x8b\xe4\xb8\x80\xe9\xa0\x85");
-    (void)h;
+    c.setTextColor(C_GOLD);
+    c.setTextDatum(textdatum_t::top_left);
+    c.drawString(g_cfg.english ? "[A] Change" : "[\xe8\x97\x8d\xe6\x91\x83] \xe8\xae\x8a\xe6\x9b\xb4\xe6\x95\xb8\xe5\x80\xbc", 15, 122);
+    c.setTextDatum(textdatum_t::top_right);
+    c.drawString(g_cfg.english ? "[B] Next Card" : "[\xe5\x81\xb4\xe6\x91\x83] \xe4\xb8\x8b\xe4\xb8\x80\xe5\xbc\xb5\xe5\x8d\xa1", 225, 122);
+    c.setTextDatum(textdatum_t::top_left);
 }
 
 static void renderQr() {
-    ensureSpriteLayout(false);
+    ensureSpriteLayout();
     String url = "https://sbgitdept.github.io/m5-bus-controller/?id=" + g_deviceId;
     g_canvas.fillSprite(C_BG);
     g_canvas.setFont(&fonts::Font0);
     g_canvas.setTextSize(1);
     g_canvas.setTextColor(C_FG);
-    g_canvas.setCursor(4, 4);
-    g_canvas.print(g_cfg.english ? "Scan to Pair" : "\xe6\x8e\x83\xe6\x8f\x8f\xe9\x85\x8d\xe5\xb0\x8d");
+    drawCenteredText(g_canvas, LAND_W, 4, g_cfg.english ? "Scan to Pair" : "\xe6\x8e\x83\xe6\x8f\x8f\xe9\x85\x8d\xe5\xb0\x8d", C_FG);
     uint8_t buf[qrcode_getBufferSize(3)];
     QRCode qr;
     qrcode_initText(&qr, buf, 3, ECC_LOW, url.c_str());
     int scale = 3, sz = qr.size * scale;
-    int ox = (PORTRAIT_W - sz) / 2, oy = 28;
+    int ox = (LAND_W - sz) / 2, oy = 22;
     for (int y = 0; y < qr.size; ++y)
         for (int x = 0; x < qr.size; ++x)
             g_canvas.fillRect(ox + x * scale, oy + y * scale, scale, scale,
                               qrcode_getModule(&qr, x, y) ? C_FG : C_BG);
-    g_canvas.setCursor(4, oy + sz + 6);
-    g_canvas.println(g_deviceId);
-    g_canvas.setCursor(4, PORTRAIT_H - 12);
-    g_canvas.setTextColor(C_DIM);
-    g_canvas.print(g_cfg.english ? "Any key closes" : "\xe6\x8c\x89\xe9\x8d\xb5\xe9\x97\x9c\xe9\x96\x89");
+    drawCenteredText(g_canvas, LAND_W, oy + sz + 4, g_deviceId.c_str(), C_DIM);
+    drawCenteredText(g_canvas, LAND_W, LAND_H - 12,
+        g_cfg.english ? "Any key closes" : "\xe6\x8c\x89\xe9\x8d\xb5\xe9\x97\x9c\xe9\x96\x89", C_DIM);
     g_canvas.pushSprite(0, 0);
 }
 
@@ -1237,13 +1279,10 @@ static void renderFrame() {
     }
     mod->onLoop();
 
-    bool landscape = frameIsLandscape();
-    ensureSpriteLayout(landscape);
-    int w = landscape ? LAND_W : PORTRAIT_W;
-    int h = landscape ? LAND_H : PORTRAIT_H;
+    ensureSpriteLayout();
 
-    if (g_ui == UiScreen::Carousel) renderCarousel(g_canvas, w, h);
-    else mod->render(g_canvas, w, h);
+    if (g_ui == UiScreen::Carousel) renderCarousel(g_canvas, LAND_W, LAND_H);
+    else mod->render(g_canvas, LAND_W, LAND_H);
 
     g_canvas.pushSprite(0, 0);
 
@@ -1297,6 +1336,8 @@ void loop() {
             publishState();
             g_lastState = millis();
         }
+    } else {
+        g_mqttOk = false;
     }
     renderFrame();
     delay(100);

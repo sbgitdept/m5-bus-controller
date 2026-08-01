@@ -84,6 +84,9 @@
 
     .bus-col { background: #0b0f19; border: 1px solid var(--card-border); border-radius: 10px; padding: 12px; }
     .bus-col-title { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+    .route-row { display: flex; gap: 8px; align-items: stretch; }
+    .route-row input { flex: 1; margin: 0; }
+    .route-row .btn { margin-top: 0; flex-shrink: 0; padding: 10px 12px; font-size: 12px; }
 
     .stock-card { background: #0b0f19; border: 1px solid var(--card-border); padding: 10px 12px; border-radius: 8px; display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
     .stock-card input { margin: 0; padding: 8px 10px; font-size: 13px; }
@@ -91,6 +94,11 @@
     .hint { font-size: 12px; color: var(--text-sub); margin-bottom: 12px; line-height: 1.6; }
     .live-box { background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.25); color: #67e8f9; padding: 8px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 10px; }
     .preview { margin-top: 10px; max-height: 160px; overflow: auto; background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 10px; font-size: 11px; color: var(--text-sub); white-space: pre-wrap; word-break: break-all; }
+    .eta-preview { margin-top: 10px; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 700; text-align: center; background: #0b0f19; border: 1px solid var(--card-border); color: var(--text-sub); line-height: 1.4; min-height: 52px; display: flex; flex-direction: column; justify-content: center; }
+    .eta-preview.ok-red { color: #f87171; border-color: rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.1); }
+    .eta-preview.ok-orange { color: #fb923c; border-color: rgba(249, 115, 22, 0.45); background: rgba(249, 115, 22, 0.1); }
+    .eta-preview.ok-green { color: #4ade80; border-color: rgba(34, 197, 94, 0.45); background: rgba(34, 197, 94, 0.1); }
+    .eta-preview.warn { color: #fbbf24; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.1); }
     .check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--text-sub); }
     .check-row input { width: auto; }
     .action-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -164,28 +172,40 @@
           <label>Operator</label>
           <select id="coA"><option value="KMB">KMB</option><option value="CTB">CTB</option></select>
           <label>Route</label>
-          <input id="routeA" list="routesA" placeholder="76K">
+          <div class="route-row">
+            <input id="routeA" list="routesA" placeholder="76K">
+            <button class="btn btn-secondary btn-inline" id="btnSearchA" type="button" data-always-enabled="1">🔍 搜尋車站</button>
+          </div>
           <datalist id="routesA"></datalist>
-          <label>Variant</label>
-          <select id="variantA" disabled><option>—</option></select>
+          <label class="kmb-only-a">Direction</label>
+          <select id="dirA" class="kmb-only-a"><option value="outbound">Outbound 去程</option><option value="inbound">Inbound 回程</option></select>
+          <label class="ctb-only-a">Variant</label>
+          <select id="variantA" class="ctb-only-a hidden" disabled><option>—</option></select>
           <label>Stop</label>
-          <select id="stopA" disabled><option>—</option></select>
+          <select id="stopA" class="stop-select" disabled><option value="">— 請先搜尋車站 —</option></select>
+          <div id="etaPreviewA" class="eta-preview eta-card">— 選擇車站後顯示 Live ETA —</div>
         </div>
         <div class="bus-col">
           <div class="bus-col-title" data-i18n="colB">右欄 B</div>
           <label>Operator</label>
           <select id="coB"><option value="KMB">KMB</option><option value="CTB">CTB</option></select>
           <label>Route</label>
-          <input id="routeB" list="routesB" placeholder="76K">
+          <div class="route-row">
+            <input id="routeB" list="routesB" placeholder="76K">
+            <button class="btn btn-secondary btn-inline" id="btnSearchB" type="button" data-always-enabled="1">🔍 搜尋車站</button>
+          </div>
           <datalist id="routesB"></datalist>
-          <label>Variant</label>
-          <select id="variantB" disabled><option>—</option></select>
+          <label class="kmb-only-b">Direction</label>
+          <select id="dirB" class="kmb-only-b"><option value="outbound">Outbound 去程</option><option value="inbound" selected>Inbound 回程</option></select>
+          <label class="ctb-only-b">Variant</label>
+          <select id="variantB" class="ctb-only-b hidden" disabled><option>—</option></select>
           <label>Stop</label>
-          <select id="stopB" disabled><option>—</option></select>
+          <select id="stopB" class="stop-select" disabled><option value="">— 請先搜尋車站 —</option></select>
+          <div id="etaPreviewB" class="eta-preview eta-card">— 選擇車站後顯示 Live ETA —</div>
         </div>
       </div>
-      <button class="btn btn-secondary btn-sm" id="btnSyncRoutes" type="button" data-i18n="syncRoutes">🔄 同步路線</button>
-      <button class="btn" id="btnSendBus" type="button" data-i18n="sendBus">📡 發送 Profile 設定至 M5</button>
+      <button class="btn btn-secondary btn-sm" id="btnSyncRoutes" type="button" data-i18n="syncRoutes" data-always-enabled="1">🔄 同步路線</button>
+      <button class="btn" id="btnSendBus" type="button" data-i18n="sendBus" data-requires-mqtt="1">📡 發送 Profile 設定至 M5</button>
     </div>
   </div>
 
@@ -196,7 +216,7 @@
         <div class="card-title">📈 <span data-i18n="stockTitle">港股 / 美股關注清單</span></div>
       </div>
       <div id="stockSlots"></div>
-      <button class="btn btn-success" id="btnFetchStock" type="button" data-i18n="fetchStock">📈 抓取 Yahoo 並推送至 M5</button>
+      <button class="btn btn-success" id="btnFetchStock" type="button" data-i18n="fetchStock" data-requires-mqtt="1">📈 抓取 Yahoo 並推送至 M5</button>
       <label class="check-row"><input type="checkbox" id="stockAuto"> <span data-i18n="autoStock">自動 60 秒</span></label>
       <div id="stockPreview" class="preview">—</div>
     </div>
@@ -209,7 +229,7 @@
         <div class="card-title">🌤️ <span data-i18n="weatherTitle">香港天文台 HKO API 同步</span></div>
       </div>
       <p class="hint" data-i18n="weatherDesc">由瀏覽器對接 HKO Open Data，清洗預報與警告後推送至 m5bus_&lt;ID&gt;/weather（retain: false）。</p>
-      <button class="btn btn-accent" id="btnFetchWeather" type="button" data-i18n="fetchWeather">🌦️ 立即拉取 HKO 天氣並推送到 M5</button>
+      <button class="btn btn-accent" id="btnFetchWeather" type="button" data-i18n="fetchWeather" data-requires-mqtt="1">🌦️ 立即拉取 HKO 天氣並推送到 M5</button>
       <label class="check-row"><input type="checkbox" id="weatherAuto" checked> <span data-i18n="autoWeather">自動 30 秒</span></label>
       <div id="weatherPreview" class="preview">—</div>
     </div>
@@ -250,14 +270,14 @@
       <input type="text" id="wifiSsid" autocomplete="username">
       <label data-i18n="wifiPass">WiFi 密碼</label>
       <input type="password" id="wifiPass" autocomplete="current-password">
-      <button class="btn btn-success" id="btnSendWifi" type="button" data-i18n="sendWifi">📶 發送 WiFi 至 M5</button>
-      <button class="btn btn-secondary btn-sm" id="btnScanWifi" type="button">📡 M5 WiFi Scan</button>
+      <button class="btn btn-success" id="btnSendWifi" type="button" data-i18n="sendWifi" data-requires-mqtt="1">📶 發送 WiFi 至 M5</button>
+      <button class="btn btn-secondary btn-sm" id="btnScanWifi" type="button" data-requires-mqtt="1">📡 M5 WiFi Scan</button>
       <label>Scan Results</label>
       <select id="scanResults" disabled><option>— scan —</option></select>
       <div class="action-row">
-        <button class="btn btn-secondary btn-sm" id="btnRefreshEta" type="button" data-i18n="refreshEta">⟳ 刷新 ETA</button>
-        <button class="btn btn-secondary btn-sm" id="btnReboot" type="button" data-i18n="reboot">↻ 重啟 M5</button>
-        <button class="btn btn-secondary btn-sm" id="btnSendSettings" type="button" data-i18n="sendSettings">💾 僅發送設定</button>
+        <button class="btn btn-secondary btn-sm" id="btnRefreshEta" type="button" data-i18n="refreshEta" data-requires-mqtt="1">⟳ 刷新 ETA</button>
+        <button class="btn btn-secondary btn-sm" id="btnReboot" type="button" data-i18n="reboot" data-requires-mqtt="1">↻ 重啟 M5</button>
+        <button class="btn btn-secondary btn-sm" id="btnSendSettings" type="button" data-i18n="sendSettings" data-requires-mqtt="1">💾 僅發送設定</button>
       </div>
     </div>
   </div>
@@ -344,7 +364,7 @@ function log(msg, type='info') {
 }
 
 const MQTT_WS = 'wss://broker.hivemq.com:8884/mqtt';
-const KMB = 'https://data.etabus.gov.hk/v1/transport/kmb';
+const KMB_API = 'https://data.etabus.gov.hk/v1/transport/kmb';
 const CTB = 'https://rt.data.gov.hk/v2/transport/citybus';
 const HKO_BASE = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php';
 const PROFILE_COUNT = 4;
@@ -354,6 +374,13 @@ const DEVICE_KEY = 'm5-device-id';
 let mqttClient = null, connected = false, lastStatus = null;
 let uiProfile = 0, kmbRoutes = [], ctbRoutes = [], kmbNums = [], ctbNums = [], ctbStops = null;
 let liveWifiNetworks = [];
+let busEtaTimer = null;
+const stopNameCache = new Map();
+/** Global live ETA state — pushed to MQTT on send */
+const busLiveState = {
+  A: { route: '', name: '', eta: -1, stopId: '' },
+  B: { route: '', name: '', eta: -1, stopId: '' }
+};
 
 function getId() { return ($('deviceId').value||'').trim().toUpperCase().replace(/[^0-9A-F]/g,''); }
 function topic(suffix) { return `m5bus_${getId()}/${suffix}`; }
@@ -395,7 +422,7 @@ function defaultDb() {
   return {v:6, activeProfile:0, profiles, stocks:[
     {symbol:'0700.HK',name:'Tencent'},{symbol:'0941.HK',name:'China Mobile'},
     {symbol:'1299.HK',name:'AIA'},{symbol:'0388.HK',name:'HKEX'}
-  ], config:{bright:1,timeout:1,english:false,wifiSsid:'',wifiPass:''}};
+  ], config:{bright:1,timeout:1,english:false,wifiSsid:'DH',wifiPass:'66764326'}};
 }
 
 function loadDb() {
@@ -412,19 +439,251 @@ function busFw(b) {
   };
 }
 
-function buildConfigPayload(activeModule) {
+function etaMinutesFromIso(iso) {
+  if (!iso) return -1;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return -1;
+  return Math.max(0, Math.round((t - Date.now()) / 60000));
+}
+
+function sideKeyFromSelect(selectElemId) {
+  return selectElemId === 'stopB' ? 'B' : 'A';
+}
+
+function kmbDirectionForSide(side) {
+  const el = $(side === 'B' ? 'dirB' : 'dirA');
+  return el?.value === 'inbound' ? 'inbound' : 'outbound';
+}
+
+async function kmbFetchRouteStops(route, direction = 'outbound', serviceType = '1') {
+  const dir = direction === 'inbound' ? 'inbound' : 'outbound';
+  const url = `${KMB_API}/route-stop/${encodeURIComponent(route)}/${dir}/${serviceType}`;
+  const data = await safeFetch(url, `KMB route-stop ${route}/${dir}`);
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+async function kmbFetchRouteStopsWithFallback(route, preferredDirection, serviceType = '1') {
+  let rows = await kmbFetchRouteStops(route, preferredDirection, serviceType);
+  if (rows.length) return { rows, direction: preferredDirection };
+  const alt = preferredDirection === 'inbound' ? 'outbound' : 'inbound';
+  rows = await kmbFetchRouteStops(route, alt, serviceType);
+  if (rows.length) {
+    log(lang === 'en' ? `Fallback to ${alt} for ${route}` : `${route} 改用 ${alt} 方向`, 'warn');
+    return { rows, direction: alt };
+  }
+  return { rows: [], direction: preferredDirection };
+}
+
+async function kmbFetchStopName(stopId) {
+  if (!stopId) return '';
+  if (stopNameCache.has(stopId)) return stopNameCache.get(stopId);
+  const url = `${KMB_API}/stop/${encodeURIComponent(stopId)}`;
+  const data = await safeFetch(url, `KMB stop ${stopId.slice(0, 8)}`);
+  const row = data.data || {};
+  const name = translateAndShortenName(row.name_tc || row.name_en || row.name || '');
+  stopNameCache.set(stopId, name);
+  return name;
+}
+
+async function kmbFetchEtaMinutes(stopId, route, serviceType = '1') {
+  if (!stopId || !route) return -1;
+  const url = `${KMB_API}/eta/${encodeURIComponent(stopId)}/${encodeURIComponent(route)}/${serviceType}`;
+  const data = await safeFetch(url, `KMB ETA ${route}`);
+  const rows = Array.isArray(data.data) ? data.data : [];
+  let best = -1;
+  for (const row of rows) {
+    const m = etaMinutesFromIso(row.eta);
+    if (m < 0) continue;
+    if (best < 0 || m < best) best = m;
+  }
+  return best;
+}
+
+function renderEtaPreview(previewElemId, side, mins, route = '', name = '', stopId = '') {
+  const el = $(previewElemId);
+  if (!el) return;
+  if (mins < 0) {
+    el.innerHTML = lang === 'en' ? '⚠️ No upcoming bus' : '⚠️ 暫無班次';
+    el.className = 'eta-preview eta-card warn';
+    busLiveState[side] = { route: route || '', name: name || '', eta: -1, stopId: stopId || '' };
+    return;
+  }
+  const minsLabel = lang === 'en' ? 'mins' : '分鐘';
+  const sub = name ? `${route} · ${name}` : route;
+  el.innerHTML = sub
+    ? `<div>🟢 Live ETA: ${mins} ${minsLabel}</div><div style="font-size:11px;font-weight:500;margin-top:4px;opacity:0.85">${sub}</div>`
+    : `<div>🟢 Live ETA: ${mins} ${minsLabel}</div>`;
+  el.className = 'eta-preview eta-card ' + (mins <= 5 ? 'ok-red' : mins <= 10 ? 'ok-orange' : 'ok-green');
+  busLiveState[side] = { route, name, eta: mins, stopId };
+}
+
+function clearEtaPreview(previewElemId, side) {
+  const el = $(previewElemId);
+  if (el) {
+    el.textContent = lang === 'en' ? '— Select a stop for Live ETA —' : '— 選擇車站後顯示 Live ETA —';
+    el.className = 'eta-preview eta-card';
+  }
+  busLiveState[side] = { route: '', name: '', eta: -1, stopId: '' };
+}
+
+async function fetchLiveEtaForSelect(stopId, route, previewElemId, side = null) {
+  const sideKey = side || (previewElemId === 'etaPreviewB' ? 'B' : 'A');
+  const sel = $(sideKey === 'B' ? 'stopB' : 'stopA');
+  const opt = sel?.selectedOptions?.[0];
+  const name = translateAndShortenName(opt?.dataset?.name || opt?.textContent?.trim() || '');
+  if (!stopId || !route) {
+    clearEtaPreview(previewElemId, sideKey);
+    return -1;
+  }
+  try {
+    const eta = await kmbFetchEtaMinutes(stopId, route, '1');
+    renderEtaPreview(previewElemId, sideKey, eta, route, name, stopId);
+    if (eta >= 0) log(`${sideKey}: ${route} ${name} → ${eta} min`, 'ok');
+    return eta;
+  } catch (err) {
+    console.error('fetchLiveEtaForSelect failed:', err);
+    clearEtaPreview(previewElemId, sideKey);
+    const msg = err?.message || String(err);
+    log(msg, 'err');
+    toast(msg, 'err');
+    return -1;
+  }
+}
+
+async function searchBusStops(routeInputId, selectElemId, previewElemId) {
+  const route = ($(routeInputId).value || '').trim().toUpperCase();
+  const side = sideKeyFromSelect(selectElemId);
+  const stopSel = $(selectElemId);
+  if (!route) {
+    toast(lang === 'en' ? 'Enter a route first' : '請先輸入路線', 'err');
+    return;
+  }
+  stopSel.innerHTML = '<option value="">Loading…</option>';
+  stopSel.disabled = true;
+  clearEtaPreview(previewElemId, side);
+
+  if (getCo(side) === 'CTB') {
+    await loadCtbStops(side);
+    return;
+  }
+
+  try {
+    const preferred = kmbDirectionForSide(side);
+    const { rows, direction } = await kmbFetchRouteStopsWithFallback(route, preferred, '1');
+    if (!rows.length) {
+      throw new Error(lang === 'en' ? `No stops found for route ${route}` : `找不到路線 ${route} 的車站`);
+    }
+    if (direction !== preferred) {
+      $(side === 'B' ? 'dirB' : 'dirA').value = direction;
+    }
+
+    const uniqueStops = [];
+    const seen = new Set();
+    for (const r of rows) {
+      const stopId = r.stop || r.stop_id;
+      if (!stopId || seen.has(stopId)) continue;
+      seen.add(stopId);
+      uniqueStops.push(stopId);
+    }
+
+    const names = await Promise.all(uniqueStops.map(async (stopId) => {
+      try {
+        return { stopId, name: await kmbFetchStopName(stopId) };
+      } catch (e) {
+        console.warn('stop name lookup failed:', stopId, e);
+        return { stopId, name: stopId };
+      }
+    }));
+
+    stopSel.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = lang === 'en' ? '— select stop —' : '— 選擇車站 —';
+    stopSel.appendChild(placeholder);
+
+    names.forEach(({ stopId, name }) => {
+      const o = document.createElement('option');
+      o.value = stopId;
+      o.textContent = name || stopId;
+      o.dataset.name = name || stopId;
+      stopSel.appendChild(o);
+    });
+    stopSel.disabled = false;
+
+    const db = loadDb();
+    const saved = db.profiles[uiProfile][side === 'B' ? 'busB' : 'busA'];
+    if (saved.stopId && [...stopSel.options].some(o => o.value === saved.stopId)) {
+      stopSel.value = saved.stopId;
+      await fetchLiveEtaForSelect(saved.stopId, route, previewElemId, side);
+    }
+
+    log(lang === 'en' ? `${side}: ${names.length} stops (${direction})` : `${side}：已載入 ${names.length} 個車站 (${direction})`, 'ok');
+    toast(lang === 'en' ? `${names.length} stops loaded` : `已載入 ${names.length} 個車站`, 'ok');
+  } catch (err) {
+    console.error('searchBusStops failed:', err);
+    stopSel.innerHTML = '<option value="">— error —</option>';
+    stopSel.disabled = true;
+    const msg = err?.message || String(err);
+    log(msg, 'err');
+    toast(msg, 'err');
+  }
+}
+
+async function liveBusCol(side) {
+  const snap = snapshot(side);
+  const name = translateAndShortenName(snap.stopName || '');
+  const base = { co: snap.co, route: snap.route, stop: snap.stopId, bound: snap.bound, svc: snap.svc, name };
+  if (!snap.stopId || !snap.route) return { ...base, eta: -1 };
+  if (snap.co === 'KMB') {
+    const previewId = side === 'B' ? 'etaPreviewB' : 'etaPreviewA';
+    const cached = busLiveState[side];
+    if (cached.stopId === snap.stopId && cached.route === snap.route && cached.eta >= 0) {
+      return { ...base, eta: cached.eta };
+    }
+    try {
+      const eta = await fetchLiveEtaForSelect(snap.stopId, snap.route, previewId, side);
+      return { ...base, eta };
+    } catch (err) {
+      console.error(`liveBusCol ${side} failed:`, err);
+      return { ...base, eta: -1 };
+    }
+  }
+  return { ...base, eta: -1 };
+}
+
+function busM5Payload(col) {
+  const eta = typeof col.eta === 'number' ? col.eta : -1;
+  return {
+    route: col.route || '',
+    name: col.name || '',
+    eta: eta < 0 ? -1 : Math.max(0, Math.round(eta))
+  };
+}
+
+async function buildConfigPayload(activeModule) {
   saveProfileToDb();
   const db = loadDb();
   const mod = activeModule || 'bus';
   const profileRows = db.profiles.map((pr, i) => ({
     id: i, name: pr.name, busA: busFw(pr.busA), busB: busFw(pr.busB)
   }));
+  let busA = { route: '', name: '', eta: -1 };
+  let busB = { route: '', name: '', eta: -1 };
+  try {
+    const [a, b] = await Promise.all([liveBusCol('A'), liveBusCol('B')]);
+    busA = busM5Payload(a);
+    busB = busM5Payload(b);
+  } catch (err) {
+    console.error('buildConfigPayload ETA fetch failed:', err);
+  }
   return {
     v: 6,
     active_module: mod,
     active_profile: db.activeProfile ?? 0,
     active_stock: 0,
     profiles: profileRows,
+    busA,
+    busB,
     settings: {
       bright: Number($('bright').value),
       timeout: Number($('timeout').value),
@@ -434,7 +693,12 @@ function buildConfigPayload(activeModule) {
       stocks: db.stocks
     },
     modules: {
-      bus: { active_profile: db.activeProfile ?? 0, profiles: profileRows },
+      bus: {
+        active_profile: db.activeProfile ?? 0,
+        profiles: profileRows,
+        busA,
+        busB
+      },
       stock: { active_stock: 0, watchlist: db.stocks }
     }
   };
@@ -446,7 +710,7 @@ function setCloud(on, detail='') {
   badge.textContent = on ? (detail || t('connected')) : t('disconnected');
   badge.className = 'status-badge ' + (on ? 'status-online' : 'status-offline');
   $('btnConnect').textContent = on ? t('disconnect') : t('connect');
-  document.querySelectorAll('button:not(#btnConnect):not(#langBtn)').forEach(b => { b.disabled = !on; });
+  document.querySelectorAll('[data-requires-mqtt]').forEach(b => { b.disabled = !on; });
 }
 
 function setLive(on, detail='') {
@@ -464,6 +728,7 @@ function disconnect() {
   if (mqttClient) { try{mqttClient.end(true);}catch{} mqttClient=null; }
   if (weatherTimer) { clearInterval(weatherTimer); weatherTimer=null; }
   if (stockTimer) { clearInterval(stockTimer); stockTimer=null; }
+  if (busEtaTimer) { clearInterval(busEtaTimer); busEtaTimer=null; }
   setCloud(false); setLive(false);
   log(lang==='en'?'Disconnected':'已中斷連線','warn');
 }
@@ -521,10 +786,28 @@ function connect() {
 }
 
 function pubConfig(activeModule) {
-  return new Promise((res,rej) => {
-    const payload = JSON.stringify(buildConfigPayload(activeModule));
-    mqttClient.publish(topic('config'), payload, {qos:0, retain:false}, e => e?rej(e):res());
-  });
+  return buildConfigPayload(activeModule).then(payload => new Promise((res,rej) => {
+    mqttClient.publish(topic('config'), JSON.stringify(payload), {qos:0, retain:false}, e => e?rej(e):res());
+  }));
+}
+
+async function pushBusConfig() {
+  return pushBusEta();
+}
+
+async function pushBusEta() {
+  if (!connected) throw new Error(lang==='en'?'MQTT not connected':'請先連線 MQTT');
+  try {
+    await pubConfig('bus');
+    log(lang==='en'?'Bus ETA pushed':'巴士 ETA 已推送','ok');
+    toast(lang==='en'?'Bus ETA sent':'🚀 巴士 ETA 已發送至 M5','ok');
+  } catch (err) {
+    console.error('pushBusEta failed:', err);
+    const msg = err?.message || String(err);
+    log(msg, 'err');
+    toast(msg, 'err');
+    throw err;
+  }
 }
 
 function pubCmd(action) {
@@ -633,8 +916,10 @@ async function pushStock() {
 function startAutoSync() {
   if (weatherTimer) clearInterval(weatherTimer);
   if (stockTimer) clearInterval(stockTimer);
+  if (busEtaTimer) clearInterval(busEtaTimer);
   if ($('weatherAuto').checked) weatherTimer = setInterval(() => pushWeather().catch(e=>log(e.message,'err')), 30000);
   if ($('stockAuto').checked) stockTimer = setInterval(() => pushStock().catch(e=>log(e.message,'err')), 60000);
+  busEtaTimer = setInterval(() => pushBusEta().catch(e=>log(e.message,'err')), 30000);
 }
 
 function getCo(side) { return $(side==='B'?'coB':'coA').value==='CTB'?'CTB':'KMB'; }
@@ -653,7 +938,7 @@ function populateRoutes() {
 async function syncRoutes() {
   try {
     const [kData, cData] = await Promise.all([
-      safeFetch(`${KMB}/route/`, 'KMB routes'),
+      safeFetch(`${KMB_API}/route/`, 'KMB routes'),
       safeFetch(`${CTB}/route/CTB`, 'CTB routes')
     ]);
     kmbRoutes = kData.data||[];
@@ -673,38 +958,50 @@ async function syncRoutes() {
 
 function variants(route, side) { return routes(getCo(side)).filter(v=>v.route===route); }
 
-async function loadStops(side) {
+async function loadCtbStops(side) {
   const route = getRoute(side);
-  const sel = $(side==='B'?'variantB':'variantA');
+  const sel = $(side === 'B' ? 'variantB' : 'variantA');
   const idx = sel.value;
-  if (idx==='') return;
+  if (idx === '') return;
   const v = variants(route, side)[Number(idx)];
-  const stopSel = $(side==='B'?'stopB':'stopA');
-  stopSel.innerHTML='<option>Loading…</option>'; stopSel.disabled=true;
+  const stopSel = $(side === 'B' ? 'stopB' : 'stopA');
+  stopSel.innerHTML = '<option>Loading…</option>';
+  stopSel.disabled = true;
   try {
-    let stops=[];
-    if (getCo(side)==='CTB') {
-      if (!ctbStops) {
-        const data = await safeFetch(`${CTB}/route-stop/CTB`, 'CTB stops');
-        ctbStops = data.data||[];
-      }
-      stops = ctbStops.filter(s=>s.route===route&&s.bound===v.bound&&String(s.service_type)===String(v.service_type));
-    } else {
-      const path = v.bound==='I'?'inbound':'outbound';
-      const data = await safeFetch(`${KMB}/route-stop/${route}/${path}/${v.service_type}`, `KMB stops ${route}`);
-      stops = data.data||[];
+    if (!ctbStops) {
+      const data = await safeFetch(`${CTB}/route-stop/CTB`, 'CTB stops');
+      ctbStops = data.data || [];
     }
-    stopSel.innerHTML='';
-    stops.forEach((s,i)=>{ const o=document.createElement('option'); o.value=s.stop||s.stop_id; o.textContent=`${i+1}. ${translateAndShortenName(s.name_tc||s.name_en||'')}`; stopSel.appendChild(o); });
+    const stops = ctbStops.filter(s => s.route === route && s.bound === v.bound && String(s.service_type) === String(v.service_type));
+    stopSel.innerHTML = '';
+    stops.forEach((s) => {
+      const o = document.createElement('option');
+      const id = s.stop || s.stop_id;
+      const nm = translateAndShortenName(s.name_tc || s.name_en || s.name || '');
+      o.value = id;
+      o.textContent = nm;
+      o.dataset.name = nm;
+      stopSel.appendChild(o);
+    });
     stopSel.disabled = !stops.length;
   } catch (err) {
-    console.error('loadStops failed:', err);
-    stopSel.innerHTML='<option>— error —</option>';
+    console.error('loadCtbStops failed:', err);
+    stopSel.innerHTML = '<option>— error —</option>';
     stopSel.disabled = true;
     const msg = err?.message || String(err);
     log(msg, 'err');
     toast(msg, 'err');
   }
+}
+
+function updateCoUi(side) {
+  const isKmb = getCo(side) === 'KMB';
+  const suf = side === 'B' ? 'b' : 'a';
+  document.querySelectorAll(`.kmb-only-${suf}`).forEach(el => el.classList.toggle('hidden', !isKmb));
+  document.querySelectorAll(`.ctb-only-${suf}`).forEach(el => el.classList.toggle('hidden', isKmb));
+  $(side === 'B' ? 'btnSearchB' : 'btnSearchA').textContent = isKmb
+    ? (lang === 'en' ? '🔍 Search Stops' : '🔍 搜尋車站')
+    : (lang === 'en' ? '🔍 Load CTB Stops' : '🔍 載入城巴車站');
 }
 
 function populateVariants(route, side, bound='O', svc='1') {
@@ -718,10 +1015,22 @@ function populateVariants(route, side, bound='O', svc='1') {
 }
 
 function snapshot(side) {
-  const stopSel = $(side==='B'?'stopB':'stopA');
-  const varSel = $(side==='B'?'variantB':'variantA');
-  const v = variants(getRoute(side), side)[Number(varSel.value)]||{};
-  return {co:getCo(side),route:getRoute(side),stopId:stopSel.value,bound:v.bound||(side==='B'?'I':'O'),svc:v.service_type||'1',stopName:stopSel.selectedOptions[0]?.textContent?.replace(/^\d+\.\s*/,'')||''};
+  const stopSel = $(side === 'B' ? 'stopB' : 'stopA');
+  const opt = stopSel.selectedOptions[0];
+  const stopName = opt?.dataset?.name || opt?.textContent?.trim() || '';
+  if (getCo(side) === 'KMB') {
+    const dir = kmbDirectionForSide(side);
+    return {
+      co: 'KMB', route: getRoute(side), stopId: stopSel.value,
+      bound: dir === 'inbound' ? 'I' : 'O', svc: '1', stopName
+    };
+  }
+  const varSel = $(side === 'B' ? 'variantB' : 'variantA');
+  const v = variants(getRoute(side), side)[Number(varSel.value)] || {};
+  return {
+    co: 'CTB', route: getRoute(side), stopId: stopSel.value,
+    bound: v.bound || (side === 'B' ? 'I' : 'O'), svc: v.service_type || '1', stopName
+  };
 }
 
 function saveProfileToDb() {
@@ -751,6 +1060,12 @@ function loadProfileUi() {
   $('profileBadge').textContent = `P${uiProfile+1}`;
   $('coA').value = p.busA.co||'KMB'; $('coB').value = p.busB.co||'KMB';
   $('routeA').value = p.busA.route||''; $('routeB').value = p.busB.route||'';
+  $('dirA').value = (p.busA.bound === 'I') ? 'inbound' : 'outbound';
+  $('dirB').value = (p.busB.bound === 'I') ? 'inbound' : 'outbound';
+  updateCoUi('A');
+  updateCoUi('B');
+  clearEtaPreview('etaPreviewA', 'A');
+  clearEtaPreview('etaPreviewB', 'B');
 }
 
 function initStockSlots() {
@@ -797,10 +1112,31 @@ function bindEvents() {
   $('btnConnect').onclick = () => { try { connected?disconnect():connect(); } catch(e){log(e.message,'err');toast(e.message,'err');} };
   $('btnSyncRoutes').onclick = () => syncRoutes().catch(e=>log(e.message,'err'));
   ['A','B'].forEach(s => {
-    $(s==='B'?'routeB':'routeA').onchange = async () => { populateVariants(getRoute(s),s); await loadStops(s); };
-    $(s==='B'?'variantB':'variantA').onchange = () => loadStops(s);
+    const routeId = s === 'B' ? 'routeB' : 'routeA';
+    const stopId = s === 'B' ? 'stopB' : 'stopA';
+    const previewId = s === 'B' ? 'etaPreviewB' : 'etaPreviewA';
+    const coEl = $(s==='B'?'coB':'coA');
+    const searchBtn = $(s==='B'?'btnSearchB':'btnSearchA');
+    const stopEl = $(stopId);
+    const varEl = $(s==='B'?'variantB':'variantA');
+    coEl.onchange = () => { updateCoUi(s); populateVariants(getRoute(s), s); clearEtaPreview(previewId, s); };
+    $(routeId).onchange = () => { populateVariants(getRoute(s), s); clearEtaPreview(previewId, s); };
+    varEl.onchange = () => loadCtbStops(s);
+    searchBtn.onclick = () => searchBusStops(routeId, stopId, previewId).catch(e => log(e.message, 'err'));
+    stopEl.onchange = () => {
+      const route = getRoute(s);
+      const stop = stopEl.value;
+      if (!stop) { clearEtaPreview(previewId, s); return; }
+      fetchLiveEtaForSelect(stop, route, previewId, s).catch(e => log(e.message, 'err'));
+    };
   });
-  $('btnSendBus').onclick = async () => { saveProfileToDb(); try{await pubConfig('bus');log(lang==='en'?'Bus config sent':'巴士設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendBus').onclick = async () => {
+    saveProfileToDb();
+    try {
+      await pushBusEta();
+      log(lang==='en'?'Bus config sent':'巴士設定已發送','ok');
+    } catch (e) { log(e.message,'err'); toast(e.message,'err'); }
+  };
   $('btnSendWifi').onclick = async () => {
     const db = loadDb();
     db.config.wifiSsid = $('wifiSsid').value.trim();
@@ -818,7 +1154,7 @@ function bindEvents() {
   };
   $('weatherAuto').onchange = startAutoSync;
   $('stockAuto').onchange = startAutoSync;
-  $('btnRefreshEta').onclick = () => pubCmd('refresh_eta').then(()=>log(lang==='en'?'ETA refresh':'ETA 已刷新','ok')).catch(e=>log(e.message,'err'));
+  $('btnRefreshEta').onclick = () => pushBusEta().catch(e=>{log(e.message,'err');toast(e.message,'err');});
   $('btnReboot').onclick = () => pubCmd('reboot').then(()=>log(lang==='en'?'Reboot sent':'重啟指令已發送','ok')).catch(e=>log(e.message,'err'));
   $('btnScanWifi').onclick = () => pubCmd('scan_wifi').then(()=>log(lang==='en'?'Scan requested':'已請求 WiFi 掃描','ok')).catch(e=>log(e.message,'err'));
   $('scanResults').onchange = () => {
@@ -830,6 +1166,8 @@ function bindEvents() {
 
 async function boot() {
   applyI18n(); bindEvents(); initProfileTabs(); initStockSlots(); loadProfileUi();
+  setCloud(false);
+  ['A','B'].forEach(s => updateCoUi(s));
   const db = loadDb();
   $('bright').value = String(db.config.bright??1);
   $('timeout').value = String(db.config.timeout??1);
@@ -837,6 +1175,8 @@ async function boot() {
   $('wifiSsid').value = db.config.wifiSsid||'';
   $('wifiPass').value = db.config.wifiPass||'';
   await syncRoutes().catch(()=>{});
+  if ($('routeA').value && getCo('A') === 'KMB') await searchBusStops('routeA', 'stopA', 'etaPreviewA').catch(()=>{});
+  if ($('routeB').value && getCo('B') === 'KMB') await searchBusStops('routeB', 'stopB', 'etaPreviewB').catch(()=>{});
   const id = parseUrlId();
   if (id && id.length>=8) {
     log(lang==='en'?`Auto-connect ${id}`:`自動連線 ${id}`,'info');
