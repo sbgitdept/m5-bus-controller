@@ -407,12 +407,13 @@
     const DB_VERSION = 2;
     const PROFILE_COUNT = 4;
     const DB_HISTORY_MAX = 12;
+    const DEFAULT_PROFILE_NAMES = ['返工', '放工', '假日', '屋企附近'];
 
     const $ = (id) => document.getElementById(id);
 
     function defaultProfileSlot(index, withRoutes = false) {
       return {
-        name: `P${index + 1}`,
+        name: DEFAULT_PROFILE_NAMES[index] || `P${index + 1}`,
         busA: {
           co: 'KMB',
           route: withRoutes ? DEFAULT_ROUTE : '',
@@ -536,7 +537,9 @@
           <input id="profileSvcB${i}" placeholder="svc" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
           <input id="profileBoundB${i}" placeholder="bound" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
         </div>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
+          <button type="button" data-profile-save="${i}"
+            class="flex-1 rounded-lg border border-emerald-600/50 bg-emerald-950 px-2 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-900 disabled:opacity-50">💾 儲存 Profile</button>
           <button type="button" data-profile-activate="${i}"
             class="flex-1 rounded-lg border border-amber-600/50 bg-amber-950 px-2 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-900 disabled:opacity-50">⚡ 切換到 M5</button>
           <button type="button" data-profile-reset="${i}"
@@ -603,6 +606,16 @@
       $('profileSlots').innerHTML = Array.from({ length: PROFILE_COUNT }, (_, i) => profileSlotMarkup(i)).join('');
       const db = loadDb();
       writeAllProfilesToUi(db.profiles, db.activeProfile ?? 0);
+      $('profileSlots').querySelectorAll('[data-profile-save]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const idx = Number(btn.dataset.profileSave);
+          try {
+            await saveProfileSlotToM5(idx);
+          } catch (e) {
+            log(`儲存 Profile 失敗：${e.message}`, 'err');
+          }
+        });
+      });
       $('profileSlots').querySelectorAll('[data-profile-activate]').forEach((btn) => {
         btn.addEventListener('click', async () => {
           const idx = Number(btn.dataset.profileActivate);
@@ -646,7 +659,8 @@
       return {
         v: 2,
         active_profile: active,
-        profiles: profiles.map((p) => ({
+        profiles: profiles.map((p, i) => ({
+          id: i,
           name: p.name,
           busA: busToFirmware(p.busA),
           busB: busToFirmware(p.busB),
@@ -673,6 +687,30 @@
       db.busB = db.profiles[db.activeProfile]?.busB || db.busB;
       saveDb(db);
       log('4-Profile 設定已發送到 M5', 'ok');
+    }
+
+    async function saveProfileSlotToM5(index) {
+      if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
+      const profiles = readAllProfilesFromUi();
+      const slot = profiles[index];
+      const payload = JSON.stringify({
+        v: 2,
+        profile_id: index,
+        name: slot.name,
+        busA: busToFirmware(slot.busA),
+        busB: busToFirmware(slot.busB),
+        profiles: profiles.map((p, i) => ({
+          id: i,
+          name: p.name,
+          busA: busToFirmware(p.busA),
+          busB: busToFirmware(p.busB),
+        })),
+      });
+      await sendPayloadToM5(payload, buildAckMeta());
+      const db = loadDb();
+      db.profiles = profiles;
+      saveDb(db);
+      log(`Profile ${index + 1}（${slot.name}）已儲存到 M5`, 'ok');
     }
 
     async function activateProfileOnM5(index) {
@@ -1219,6 +1257,9 @@
       $('btnRadarUseM5Wifi').disabled = !connected;
       $('btnRadarScanWifi').disabled = !connected;
       $('btnSendProfiles').disabled = !connected;
+      $('profileSlots')?.querySelectorAll('[data-profile-save],[data-profile-activate]').forEach((btn) => {
+        btn.disabled = !connected;
+      });
       $('btnSendWifi').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
@@ -1831,7 +1872,8 @@
       return JSON.stringify({
         v: 2,
         active_profile: active,
-        profiles: profiles.map((p) => ({
+        profiles: profiles.map((p, i) => ({
+          id: i,
           name: p.name,
           busA: busToFirmware(p.busA),
           busB: busToFirmware(p.busB),
