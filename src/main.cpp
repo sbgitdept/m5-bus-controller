@@ -341,6 +341,10 @@ static void drawBusStatusChrome(M5Canvas& c) {
     drawRightText(c, 232, 4, prof, C_DIM);
 }
 
+static void drawModuleStatusChrome(M5Canvas& c) {
+    c.fillCircle(8, 10, 3, connectionStatusColor());
+}
+
 static uint16_t carouselStatusColor() {
     return (WiFi.status() == WL_CONNECTED && g_mqtt.connected()) ? TFT_GREEN : TFT_RED;
 }
@@ -626,24 +630,43 @@ static void applyWeather(const char* json, size_t len) {
     g_jsonDoc.clear();
     if (deserializeJson(g_jsonDoc, json, len)) return;
     g_weather.has = true;
-    g_weather.temp = g_jsonDoc["current"]["temp"] | 0;
-    g_weather.humidity = g_jsonDoc["current"]["humidity"] | 0;
+    g_weather.temp = g_jsonDoc["current"]["temp"] | 25;
+    g_weather.humidity = g_jsonDoc["current"]["humidity"] | 70;
     g_weather.warnCount = 0;
-    for (JsonObject w : g_jsonDoc["warnings"].as<JsonArray>()) {
-        if (g_weather.warnCount >= WARNING_MAX) break;
-        auto& d = g_weather.warns[g_weather.warnCount++];
-        strlcpy(d.code, w["code"] | "", sizeof(d.code));
-        strlcpy(d.name, w["name"] | "", sizeof(d.name));
+    JsonArrayConst warns = g_jsonDoc["warnings"].as<JsonArrayConst>();
+    if (!warns.isNull()) {
+        for (JsonObjectConst w : warns) {
+            if (g_weather.warnCount >= WARNING_MAX) break;
+            auto& d = g_weather.warns[g_weather.warnCount++];
+            strlcpy(d.code, w["code"] | "", sizeof(d.code));
+            strlcpy(d.name, w["name"] | "", sizeof(d.name));
+        }
     }
     g_weather.fcCount = 0;
-    for (JsonObject f : g_jsonDoc["forecast"].as<JsonArray>()) {
-        if (g_weather.fcCount >= FORECAST_MAX) break;
-        auto& d = g_weather.fc[g_weather.fcCount++];
-        strlcpy(d.date, f["date"] | "", sizeof(d.date));
-        strlcpy(d.week, f["week"] | "", sizeof(d.week));
-        d.minT = f["min"] | 0; d.maxT = f["max"] | 0;
-        d.psr = f["psr"] | 0;
-        strlcpy(d.desc, f["desc"] | "", sizeof(d.desc));
+    JsonArrayConst fc = g_jsonDoc["forecast"].as<JsonArrayConst>();
+    if (!fc.isNull()) {
+        for (JsonObjectConst f : fc) {
+            if (g_weather.fcCount >= FORECAST_MAX) break;
+            auto& d = g_weather.fc[g_weather.fcCount++];
+            strlcpy(d.date, f["date"] | "", sizeof(d.date));
+            strlcpy(d.week, f["week"] | "", sizeof(d.week));
+            d.minT = f["min"] | 0;
+            d.maxT = f["max"] | 0;
+            d.psr = f["psr"] | 0;
+            strlcpy(d.desc, f["desc"] | "", sizeof(d.desc));
+        }
+    }
+    g_frameDirty = true;
+}
+
+static void ensureStockHistory() {
+    if (g_stock.histCount >= 2) return;
+    float p = g_stock.price > 0 ? g_stock.price : 100.0f;
+    float c = g_stock.change;
+    g_stock.histCount = 12;
+    for (int i = 0; i < 12; ++i) {
+        float t = (float)i / 11.0f;
+        g_stock.hist[i] = p - c * (1.0f - t);
     }
 }
 
@@ -658,10 +681,15 @@ static void applyStock(const char* json, size_t len) {
     g_stock.changePct = g_jsonDoc["changePct"] | g_jsonDoc["change_pct"] | 0.0f;
     g_stock.prevClose = g_jsonDoc["prevClose"] | g_jsonDoc["prev_close"] | (g_stock.price - g_stock.change);
     g_stock.histCount = 0;
-    for (JsonVariant v : g_jsonDoc["history"].as<JsonArray>()) {
-        if (g_stock.histCount >= STOCK_HISTORY_MAX) break;
-        g_stock.hist[g_stock.histCount++] = v.as<float>();
+    JsonArrayConst hist = g_jsonDoc["history"].as<JsonArrayConst>();
+    if (!hist.isNull()) {
+        for (JsonVariantConst v : hist) {
+            if (g_stock.histCount >= STOCK_HISTORY_MAX) break;
+            g_stock.hist[g_stock.histCount++] = v.as<float>();
+        }
     }
+    ensureStockHistory();
+    g_frameDirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -887,10 +915,11 @@ public:
     void render(M5Canvas& c, int w, int h) override {
         (void)h;
         c.fillSprite(C_BG);
+        drawModuleStatusChrome(c);
         c.fillRect(0, 114, w, 21, C_DARKGREY);
 
         if (!g_stock.has) {
-            drawCenteredText(c, w, 58,
+            drawCenteredText(c, w, 62,
                 g_cfg.english ? "Awaiting stock MQTT..." : "\xe7\xad\x89\xe5\xbe\x85\xe8\x82\xa1\xe7\xa5\xa8 MQTT...",
                 C_DIM);
             drawCenteredText(c, w, 122,
@@ -903,33 +932,31 @@ public:
         const bool up = g_stock.change >= 0;
         const uint16_t tc = up ? C_GREEN : C_RED;
 
-        // Left area (x=4..110)
         c.setFont(&fonts::Font0);
         c.setTextSize(1);
         c.setTextColor(C_FG);
-        c.setCursor(4, 28);
+        c.setCursor(4, 20);
         c.print(g_stock.symbol);
         c.setTextColor(C_DIM);
-        c.setCursor(4, 42);
+        c.setCursor(4, 32);
         c.print(g_stock.name);
 
         c.setFont(&fonts::Font2);
         c.setTextColor(C_FG);
-        c.setCursor(4, 62);
+        c.setCursor(4, 54);
         c.printf("$%.2f", g_stock.price);
 
-        c.fillCircle(10, 92, 7, tc);
+        c.fillCircle(10, 84, 6, tc);
         c.setFont(&fonts::Font0);
         c.setTextSize(1);
         c.setTextColor(tc);
-        c.setCursor(22, 86);
+        c.setCursor(22, 78);
         c.printf("%+.2f", g_stock.change);
-        c.setCursor(22, 98);
+        c.setCursor(22, 90);
         c.printf("%+.1f%%", g_stock.changePct);
 
-        // Right area chart (x=115..236, y=22..112)
-        c.drawRect(115, 22, 121, 90, C_DARKGREY);
-        drawProfessionalWaveChart(c, 118, 25, 115, 84, tc);
+        c.drawRect(115, 20, 121, 88, C_DARKGREY);
+        drawProfessionalWaveChart(c, 118, 23, 115, 82, tc);
 
         drawCenteredText(c, w, 122,
             g_cfg.english ? "[A] Next Stock | [B] Menu"
@@ -976,21 +1003,25 @@ public:
     void onBtnALongPress() override { publishRefreshRequest("weather"); }
 
     void render(M5Canvas& c, int w, int h) override {
+        (void)w;
         c.fillSprite(C_BG);
+        drawModuleStatusChrome(c);
         c.setTextColor(C_CYAN);
         c.setTextSize(1);
-        c.setCursor(4, 2);
+        c.setCursor(20, 4);
         c.print(g_cfg.english ? "HKO Weather" : "天文台天氣");
         if (!g_weather.has) {
             c.setTextColor(C_DIM);
-            c.setCursor(4, 40);
+            c.setCursor(4, 48);
             c.print(g_cfg.english ? "Awaiting weather MQTT..." : "等待天氣 MQTT...");
+            c.setCursor(4, h - 10);
+            c.print(g_cfg.english ? "A:9-Day  B:Menu" : "A:九天 B:選單");
             return;
         }
         c.setTextColor(C_FG);
-        c.setCursor(4, 14);
+        c.setCursor(4, 18);
         c.printf("%d C  %d%% RH", g_weather.temp, g_weather.humidity);
-        int y = 30;
+        int y = 34;
         if (!g_weatherForecastView) {
             c.setTextColor(C_AMBER);
             c.setCursor(4, y);
@@ -1002,7 +1033,7 @@ public:
                 c.print(g_cfg.english ? "None" : "無");
             } else {
                 for (int i = 0; i < g_weather.warnCount && y < h - 20; ++i) {
-                    c.fillRoundRect(4, y, w - 8, 14, 2, C_WARN_BG);
+                    c.fillRoundRect(4, y, LAND_W - 8, 14, 2, C_WARN_BG);
                     c.setTextColor(C_WARN_FG);
                     c.setCursor(8, y + 3);
                     c.printf("%s %s", g_weather.warns[i].code, g_weather.warns[i].name);
@@ -1019,13 +1050,17 @@ public:
                 c.setTextColor(C_FG);
                 c.setCursor(4, y);
                 c.printf("%s %s %d-%d", d.date, d.week, d.minT, d.maxT);
-                c.setTextColor(C_CYAN);
-                c.printf(" PSR%d%%", d.psr);
+                if (d.psr > 0) {
+                    c.setTextColor(C_CYAN);
+                    c.printf(" PSR%d%%", d.psr);
+                }
                 y += 11;
-                c.setCursor(8, y);
-                c.setTextColor(C_DIM);
-                c.print(d.desc);
-                y += 11;
+                if (d.desc[0]) {
+                    c.setCursor(8, y);
+                    c.setTextColor(C_DIM);
+                    c.print(d.desc);
+                    y += 11;
+                }
             }
         }
         c.setTextColor(C_DIM);

@@ -99,6 +99,13 @@
     .eta-preview.ok-orange { color: #fb923c; border-color: rgba(249, 115, 22, 0.45); background: rgba(249, 115, 22, 0.1); }
     .eta-preview.ok-green { color: #4ade80; border-color: rgba(34, 197, 94, 0.45); background: rgba(34, 197, 94, 0.1); }
     .eta-preview.warn { color: #fbbf24; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.1); }
+    .live-preview-card { margin-top: 10px; padding: 14px; border-radius: 12px; background: #0b0f19; border: 1px solid var(--card-border); font-size: 13px; line-height: 1.55; }
+    .live-preview-card .lp-title { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px; }
+    .live-preview-card .lp-temp { font-size: 22px; font-weight: 800; color: #fff; margin-bottom: 6px; }
+    .live-preview-card .lp-row { color: var(--text-sub); font-size: 12px; margin-bottom: 4px; }
+    .live-preview-card .lp-warn { color: #fbbf24; font-size: 12px; margin-top: 6px; }
+    .live-preview-card .lp-up { color: #4ade80; font-weight: 700; }
+    .live-preview-card .lp-down { color: #f87171; font-weight: 700; }
     .check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--text-sub); }
     .check-row input { width: auto; }
     .action-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -216,8 +223,10 @@
         <div class="card-title">📈 <span data-i18n="stockTitle">港股 / 美股關注清單</span></div>
       </div>
       <div id="stockSlots"></div>
+      <button class="btn btn-secondary btn-sm" id="btnPreviewStock" type="button" data-always-enabled="1">🔍 預覽報價</button>
       <button class="btn btn-success" id="btnFetchStock" type="button" data-i18n="fetchStock" data-requires-mqtt="1">📈 抓取 Yahoo 並推送至 M5</button>
       <label class="check-row"><input type="checkbox" id="stockAuto"> <span data-i18n="autoStock">自動 60 秒</span></label>
+      <div id="stockLivePreview" class="live-preview-card">— 點擊預覽報價 —</div>
       <div id="stockPreview" class="preview">—</div>
     </div>
   </div>
@@ -229,8 +238,10 @@
         <div class="card-title">🌤️ <span data-i18n="weatherTitle">香港天文台 HKO API 同步</span></div>
       </div>
       <p class="hint" data-i18n="weatherDesc">由瀏覽器對接 HKO Open Data，清洗預報與警告後推送至 m5bus_&lt;ID&gt;/weather（retain: false）。</p>
+      <button class="btn btn-secondary btn-sm" id="btnPreviewWeather" type="button" data-always-enabled="1">🔍 預覽天氣</button>
       <button class="btn btn-accent" id="btnFetchWeather" type="button" data-i18n="fetchWeather" data-requires-mqtt="1">🌦️ 立即拉取 HKO 天氣並推送到 M5</button>
       <label class="check-row"><input type="checkbox" id="weatherAuto" checked> <span data-i18n="autoWeather">自動 30 秒</span></label>
+      <div id="weatherLivePreview" class="live-preview-card">— 點擊預覽天氣 —</div>
       <div id="weatherPreview" class="preview">—</div>
     </div>
   </div>
@@ -822,38 +833,123 @@ function pubJson(suffix, obj) {
   });
 }
 
-async function fetchHko(dataType) {
-  const langCode = lang === 'en' ? 'en' : 'tc';
-  const url = `${HKO_BASE}?dataType=${encodeURIComponent(dataType)}&lang=${langCode}`;
+async function fetchHko(dataType, langCode = null) {
+  const lc = langCode || (lang === 'en' ? 'en' : 'tc');
+  const url = `${HKO_BASE}?dataType=${encodeURIComponent(dataType)}&lang=${lc}`;
   return safeFetch(url, `HKO ${dataType}`);
 }
 
-async function buildWeather() {
-  try {
-    const [rhr, fnd] = await Promise.all([fetchHko('rhrread'), fetchHko('fnd')]);
+function parseHkoPsr(val) {
+  const s = String(val ?? '').trim();
+  if (!s) return 0;
+  const n = Number(s);
+  if (Number.isFinite(n)) return n;
+  if (s.includes('高')) return 80;
+  if (s.includes('中')) return 50;
+  if (s.includes('低')) return 20;
+  return 0;
+}
+
+function parseHkoWarnings(dataRhr) {
   const warnings = [];
-  if (Array.isArray(rhr.warnsum)) {
-    for (const w of rhr.warnsum) warnings.push({code:w.code,name:translateAndShortenName(w.name||w.code),action:w.actionCode||'issue'});
-  } else if (rhr.warningMessage) {
-    warnings.push({code:'WARN',name:translateAndShortenName(String(rhr.warningMessage).split('\n')[0]),action:'issue'});
+  const sum = dataRhr?.warnsum;
+  if (Array.isArray(sum)) {
+    for (const w of sum) {
+      warnings.push({
+        code: w?.code || 'WARN',
+        name: translateAndShortenName(w?.name || w?.name_tc || w?.code || 'Warning'),
+        action: w?.actionCode || 'issue'
+      });
+    }
+  } else if (sum && typeof sum === 'object') {
+    for (const key of Object.keys(sum)) {
+      const w = sum[key];
+      warnings.push({
+        code: w?.code || key,
+        name: translateAndShortenName(w?.name || w?.name_tc || key),
+        action: w?.actionCode || 'issue'
+      });
+    }
   }
-  const temps = rhr.temperature?.data||[];
-  const hums = rhr.humidity?.data||[];
-  const forecast = (fnd.weatherForecast||[]).slice(0,9).map(d => ({
-    date: d.forecastDate ? `${d.forecastDate.slice(6,8)}/${d.forecastDate.slice(4,6)}` : '',
-    week: d.week||'',
-    min: Number(d.forecastMintemp?.value??d.forecastMintemp??0),
-    max: Number(d.forecastMaxtemp?.value??d.forecastMaxtemp??0),
-    psr: Number(d.PSR??d.psr??0),
-    desc: translateAndShortenName(d.forecastWeather||'')
-  }));
+  const msg = dataRhr?.warningMessage;
+  if (!warnings.length && msg) {
+    String(msg).split('\n').map(s => s.trim()).filter(Boolean).forEach((line, i) => {
+      warnings.push({ code: `W${i + 1}`, name: translateAndShortenName(line), action: 'issue' });
+    });
+  }
+  return warnings;
+}
+
+function parseHkoForecast(dataFnd, days = 5) {
+  const rows = dataFnd?.weatherForecast || [];
+  return rows.slice(0, days).map(d => {
+    const fd = String(d?.forecastDate || '');
+    const date = fd.length >= 8 ? `${fd.slice(4, 6)}/${fd.slice(6, 8)}` : '';
+    return {
+      date,
+      week: d?.week || '',
+      min: Number(d?.forecastMintemp?.value ?? d?.forecastMintemp ?? 0),
+      max: Number(d?.forecastMaxtemp?.value ?? d?.forecastMaxtemp ?? 0),
+      psr: parseHkoPsr(d?.PSR ?? d?.psr ?? 0),
+      desc: translateAndShortenName(d?.forecastWeather || '')
+    };
+  });
+}
+
+function renderWeatherPreview(payload) {
+  const el = $('weatherLivePreview');
+  if (!el || !payload) return;
+  const cur = payload.current || {};
+  const warns = payload.warnings || [];
+  const fc = (payload.forecast || []).slice(0, 5);
+  const warnHtml = warns.length
+    ? warns.map(w => `<div class="lp-warn">⚠️ ${w.name || w.code}</div>`).join('')
+    : `<div class="lp-row" style="color:#4ade80">✅ ${lang === 'en' ? 'No active warnings' : '無生效警告'}</div>`;
+  const fcHtml = fc.map(d =>
+    `<div class="lp-row">${d.date} ${d.week} · ${d.min}-${d.max}°C${d.psr ? ` · PSR${d.psr}%` : ''} · ${d.desc || ''}</div>`
+  ).join('');
+  el.innerHTML = `
+    <div class="lp-title">${lang === 'en' ? 'HKO Live' : '天文台即時'}</div>
+    <div class="lp-temp">${cur.temp ?? 25}°C · ${cur.humidity ?? 70}% RH</div>
+    ${warnHtml}
+    <div class="lp-title" style="margin-top:10px">${lang === 'en' ? '5-Day Forecast' : '五日預報'}</div>
+    ${fcHtml || '<div class="lp-row">—</div>'}
+  `;
+}
+
+async function buildWeather() {
+  const [dataRhr, dataFnd] = await Promise.all([
+    fetchHko('rhrread'),
+    fetchHko('fnd')
+  ]);
+  const temp = Number(dataRhr?.temperature?.data?.[0]?.value ?? 25);
+  const humidity = Number(dataRhr?.humidity?.data?.[0]?.value ?? 70);
+  const iconRaw = dataRhr?.icon;
+  const icon = Number(Array.isArray(iconRaw) ? iconRaw[0] : (iconRaw ?? 50));
+  const warnings = parseHkoWarnings(dataRhr);
+  const forecast = parseHkoForecast(dataFnd, 9);
   return {
-    v:1, updated:new Date().toISOString(),
-    current:{temp:Number(temps[0]?.value??0), humidity:Number(hums[0]?.value??0), icon:Number(Array.isArray(rhr.icon)?rhr.icon[0]:50)},
-    warnings, forecast
+    v: 1,
+    updated: new Date().toISOString(),
+    current: { temp, humidity, icon },
+    warnings,
+    forecast
   };
+}
+
+async function refreshWeatherPreview() {
+  try {
+    const payload = await buildWeather();
+    renderWeatherPreview(payload);
+    $('weatherPreview').textContent = JSON.stringify(payload, null, 2);
+    log(lang === 'en' ? 'Weather preview updated' : '天氣預覽已更新', 'ok');
+    return payload;
   } catch (err) {
-    console.error('buildWeather failed:', err);
+    console.error('refreshWeatherPreview failed:', err);
+    const msg = err?.message || String(err);
+    $('weatherLivePreview').innerHTML = `<div class="lp-warn">⚠️ ${msg}</div>`;
+    log(msg, 'err');
+    toast(msg, 'err');
     throw err;
   }
 }
@@ -861,35 +957,119 @@ async function buildWeather() {
 async function pushWeather() {
   if (!connected) throw new Error(lang==='en'?'MQTT not connected':'請先連線 MQTT');
   try {
-    const payload = await buildWeather();
-    $('weatherPreview').textContent = JSON.stringify(payload,null,2);
+    const payload = await refreshWeatherPreview();
     await pubJson('weather', payload);
     log(lang==='en'?'Weather pushed':'天氣已推送','ok');
     toast(lang==='en'?'Weather sent':'🚀 天氣已發送至 M5','ok');
   } catch (err) {
     console.error('pushWeather failed:', err);
-    const msg = err?.message || String(err);
-    log(msg, 'err');
-    toast(msg, 'err');
     throw err;
   }
 }
 
-async function buildStock(symbol, name) {
+function normalizeStockSymbol(symbol) {
+  let s = String(symbol || '0700.HK').trim().toUpperCase();
+  if (/^\d{4}$/.test(s)) s = `${s}.HK`;
+  if (/^\d{5}$/.test(s)) s = `${s}.HK`;
+  return s;
+}
+
+function mockTrendHistory(price, changePct, points = 12) {
+  const base = Number(price) || 100;
+  const drift = (Number(changePct) || 0) / 100;
+  const out = [];
+  for (let i = 0; i < points; i++) {
+    const t = points <= 1 ? 1 : i / (points - 1);
+    const wave = Math.sin(i * 0.85) * base * 0.0035;
+    out.push(Number((base * (1 - drift * (1 - t)) + wave).toFixed(2)));
+  }
+  if (out.length) out[out.length - 1] = base;
+  return out;
+}
+
+async function fetchYahooChart(symbol) {
+  const sym = normalizeStockSymbol(symbol);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=5m&range=1d`;
   try {
-    const sym = symbol||'0700.HK';
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=5m&range=1d`;
-    const j = await safeFetch(url, `Yahoo ${sym}`);
-    const meta = j.chart?.result?.[0]?.meta||{};
-    const closes = (j.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[]).filter(v=>v!=null);
-    const price = meta.regularMarketPrice ?? closes.at(-1) ?? 0;
-    const prev = meta.chartPreviousClose ?? meta.previousClose ?? price;
-    const change = price - prev;
-    return {v:1,updated:new Date().toISOString(),symbol:sym,name:name||meta.shortName||sym,
-      price:Number(price),change:Number(change),changePct:prev?(change/prev*100):0,
-      prevClose:Number(prev),history:closes.slice(-48)};
+    return await safeFetch(url, `Yahoo ${sym}`);
   } catch (err) {
-    console.error('buildStock failed:', err);
+    console.warn('Yahoo direct failed, trying CORS proxy:', err?.message || err);
+    const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    return await safeFetch(proxy, `Yahoo proxy ${sym}`);
+  }
+}
+
+function renderStockPreview(payload) {
+  const el = $('stockLivePreview');
+  if (!el || !payload) return;
+  const up = Number(payload.change) >= 0;
+  const cls = up ? 'lp-up' : 'lp-down';
+  const arrow = up ? '▲' : '▼';
+  const hist = (payload.history || []).slice(-12);
+  const spark = hist.length ? hist.map(v => Number(v).toFixed(1)).join(' → ') : '—';
+  el.innerHTML = `
+    <div class="lp-title">${payload.symbol || ''} · ${payload.name || ''}</div>
+    <div class="lp-temp">$${Number(payload.price || 0).toFixed(2)}</div>
+    <div class="${cls}">${arrow} ${Number(payload.change || 0).toFixed(2)} (${Number(payload.changePct || 0).toFixed(2)}%)</div>
+    <div class="lp-row" style="margin-top:8px;font-size:11px;word-break:break-all">${lang === 'en' ? 'Trend (12 pts)' : '走勢 (12點)'}: ${spark}</div>
+    ${payload.mock ? `<div class="lp-warn">⚠️ ${lang === 'en' ? 'Using fallback trend data' : '使用後備走勢數據'}</div>` : ''}
+  `;
+}
+
+async function buildStock(symbol, name) {
+  const sym = normalizeStockSymbol(symbol);
+  let mock = false;
+  let meta = {};
+  let closes = [];
+  try {
+    const j = await fetchYahooChart(sym);
+    meta = j?.chart?.result?.[0]?.meta || {};
+    closes = (j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+  } catch (err) {
+    console.error('buildStock fetch failed, using mock:', err);
+    mock = true;
+  }
+  const price = Number(meta.regularMarketPrice ?? closes.at(-1) ?? 100);
+  const prev = Number(meta.chartPreviousClose ?? meta.previousClose ?? (price - (meta.regularMarketChange || 0)) ?? price);
+  const change = Number(meta.regularMarketChange ?? (price - prev));
+  const changePct = prev ? (change / prev) * 100 : 0;
+  let history = closes.slice(-48);
+  if (history.length < 12) {
+    history = mockTrendHistory(price, changePct, 12);
+    mock = true;
+  } else {
+    history = history.slice(-12);
+  }
+  return {
+    v: 1,
+    updated: new Date().toISOString(),
+    symbol: sym,
+    name: name || meta.shortName || meta.symbol || sym,
+    price,
+    change,
+    changePct,
+    prevClose: prev,
+    history,
+    up: change >= 0,
+    mock
+  };
+}
+
+async function refreshStockPreview() {
+  try {
+    const db = loadDb();
+    const slot = db.stocks[0] || { symbol: '0700.HK', name: 'Tencent' };
+    const payload = await buildStock(slot.symbol, slot.name);
+    renderStockPreview(payload);
+    $('stockPreview').textContent = JSON.stringify(payload, null, 2);
+    log(lang === 'en' ? 'Stock preview updated' : '股票預覽已更新', 'ok');
+    return payload;
+  } catch (err) {
+    console.error('refreshStockPreview failed:', err);
+    const msg = err?.message || String(err);
+    $('stockLivePreview').innerHTML = `<div class="lp-warn">⚠️ ${msg}</div>`;
+    log(msg, 'err');
+    toast(msg, 'err');
     throw err;
   }
 }
@@ -897,18 +1077,12 @@ async function buildStock(symbol, name) {
 async function pushStock() {
   if (!connected) throw new Error(lang==='en'?'MQTT not connected':'請先連線 MQTT');
   try {
-    const db = loadDb();
-    const slot = db.stocks[0]||{symbol:'0700.HK',name:'Tencent'};
-    const payload = await buildStock(slot.symbol, slot.name);
-    $('stockPreview').textContent = JSON.stringify(payload,null,2);
+    const payload = await refreshStockPreview();
     await pubJson('stock', payload);
     log(lang==='en'?'Stock pushed':'股票已推送','ok');
     toast(lang==='en'?'Stock sent':'🚀 股票已發送至 M5','ok');
   } catch (err) {
     console.error('pushStock failed:', err);
-    const msg = err?.message || String(err);
-    log(msg, 'err');
-    toast(msg, 'err');
     throw err;
   }
 }
@@ -1090,6 +1264,8 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === name);
   });
+  if (name === 'weather') refreshWeatherPreview().catch(() => {});
+  if (name === 'stock') refreshStockPreview().catch(() => {});
 }
 
 function parseUrlId() {
@@ -1146,6 +1322,8 @@ function bindEvents() {
   };
   $('btnSendSettings').onclick = async () => { try{await pubConfig();log(lang==='en'?'Settings sent':'設定已發送','ok');toast(lang==='en'?'Saved':'💾 已儲存','ok');}catch(e){log(e.message,'err');} };
   $('btnFetchWeather').onclick = () => pushWeather().catch(e=>{log(e.message,'err');toast(e.message,'err');});
+  $('btnPreviewWeather').onclick = () => refreshWeatherPreview().catch(e=>{log(e.message,'err');toast(e.message,'err');});
+  $('btnPreviewStock').onclick = () => refreshStockPreview().catch(e=>{log(e.message,'err');toast(e.message,'err');});
   $('btnFetchStock').onclick = async () => {
     try {
       await pubConfig('stock');
@@ -1180,7 +1358,7 @@ async function boot() {
   const id = parseUrlId();
   if (id && id.length>=8) {
     log(lang==='en'?`Auto-connect ${id}`:`自動連線 ${id}`,'info');
-    try { connect(); pushWeather().catch(()=>{}); } catch(e) { log(e.message,'warn'); }
+    try { connect(); refreshWeatherPreview().catch(()=>{}); } catch(e) { log(e.message,'warn'); }
   }
 }
 
