@@ -157,6 +157,10 @@ static uint32_t g_lastFrameHash = 0;
 
 static constexpr int BUS_COL_A_X = 60;
 static constexpr int BUS_COL_B_X = 180;
+static constexpr int BUS_DIVIDER_X = 120;
+static constexpr int BUS_ROW_ROUTE_Y = 14;
+static constexpr int BUS_ROW_ETA_Y = 62;
+static constexpr int BUS_ROW_NEXT_Y = 118;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -335,7 +339,7 @@ static uint16_t connectionStatusColor() {
 }
 
 static void drawBusStatusChrome(M5Canvas& c) {
-    c.fillCircle(8, 10, 3, connectionStatusColor());
+    c.fillCircle(8, 8, 3, connectionStatusColor());
     char prof[8];
     snprintf(prof, sizeof(prof), "P%d", g_activeProfile + 1);
     drawRightText(c, 232, 4, prof, C_DIM);
@@ -428,17 +432,20 @@ static void applyBusLive(JsonObjectConst o, BusColState& col, BusStopCfg& cfg) {
     readBus(o, cfg);
     if (o["route"].is<const char*>()) strlcpy(col.route, o["route"], sizeof(col.route));
     else if (cfg.route[0]) strlcpy(col.route, cfg.route, sizeof(col.route));
-    const char* nm = o["name"] | cfg.name;
-    if (nm && nm[0]) strlcpy(col.stop, nm, sizeof(col.stop));
-    memset(col.slots, 0, sizeof(col.slots));
-    if (o["eta"].is<int>()) {
-        int m = o["eta"].as<int>();
-        if (m < 0) m = 0;
-        col.slots[0].minutes = m;
-        col.slots[0].valid = true;
+    if (o["dest"].is<const char*>()) strlcpy(cfg.dest, o["dest"], sizeof(cfg.dest));
+
+    auto setSlot = [&](int idx, int mins) {
+        if (mins < 0) mins = 0;
+        col.slots[idx].minutes = mins;
+        col.slots[idx].valid = true;
+        if (cfg.dest[0]) strlcpy(col.slots[idx].dest, cfg.dest, sizeof(col.slots[idx].dest));
         col.ok = true;
-        g_frameDirty = true;
-    }
+    };
+
+    if (o["eta"].is<int>()) setSlot(0, o["eta"].as<int>());
+    if (o["eta2"].is<int>()) setSlot(1, o["eta2"].as<int>());
+    if (o["eta3"].is<int>()) setSlot(2, o["eta3"].as<int>());
+    g_frameDirty = true;
 }
 
 static void applyBusProfiles(JsonArrayConst arr) {
@@ -519,12 +526,12 @@ static void loadNvs() {
         strlcpy(g_profiles[0].busA.route, "76K", sizeof(g_profiles[0].busA.route));
         strlcpy(g_profiles[0].busA.stop, "68C988CE5394BAE7", sizeof(g_profiles[0].busA.stop));
         strlcpy(g_profiles[0].busA.name, g_cfg.english ? "Long Ping" : "朗屏", sizeof(g_profiles[0].busA.name));
-        strlcpy(g_profiles[0].busA.dest, g_profiles[0].busA.name, sizeof(g_profiles[0].busA.dest));
+        strlcpy(g_profiles[0].busA.dest, g_cfg.english ? "Sheung Shui" : "上水", sizeof(g_profiles[0].busA.dest));
         strlcpy(g_profiles[0].busB.co, "KMB", sizeof(g_profiles[0].busB.co));
         strlcpy(g_profiles[0].busB.route, "76K", sizeof(g_profiles[0].busB.route));
         strlcpy(g_profiles[0].busB.stop, "B0D79D5CE512B9EC", sizeof(g_profiles[0].busB.stop));
         strlcpy(g_profiles[0].busB.name, g_cfg.english ? "Sheung Shui" : "上水", sizeof(g_profiles[0].busB.name));
-        strlcpy(g_profiles[0].busB.dest, g_profiles[0].busB.name, sizeof(g_profiles[0].busB.dest));
+        strlcpy(g_profiles[0].busB.dest, g_cfg.english ? "Long Ping" : "朗屏", sizeof(g_profiles[0].busB.dest));
         strlcpy(g_cfg.stocks[0].symbol, "0700.HK", sizeof(g_cfg.stocks[0].symbol));
         strlcpy(g_cfg.stocks[0].name, "Tencent", sizeof(g_cfg.stocks[0].name));
     }
@@ -568,17 +575,20 @@ static void parseEta(const String& body, BusColState& col) {
 }
 
 static void fetchCol(const BusStopCfg& cfg, BusColState& col) {
-    memset(&col, 0, sizeof(col));
-    strlcpy(col.route, cfg.route, sizeof(col.route));
-    strlcpy(col.stop, cfg.name[0] ? cfg.name : cfg.stop, sizeof(col.stop));
     if (!cfg.route[0] || !cfg.stop[0]) return;
+    BusColState fresh = {};
+    strlcpy(fresh.route, cfg.route, sizeof(fresh.route));
+    strlcpy(fresh.stop, cfg.name[0] ? cfg.name : cfg.stop, sizeof(fresh.stop));
     String url;
     if (!strcmp(cfg.co, "CTB"))
         url = String("https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/") + cfg.stop + "/" + cfg.route;
     else
         url = String("https://data.etabus.gov.hk/v1/transport/kmb/eta/") + cfg.stop + "/" + cfg.route + "/" + cfg.svc;
     String body;
-    if (httpGet(url, body)) parseEta(body, col);
+    if (httpGet(url, body)) {
+        parseEta(body, fresh);
+        if (fresh.ok) col = fresh;
+    }
 }
 
 static void fetchAllEta() {
@@ -591,12 +601,12 @@ static void etaTick() {
     if (g_etaStep == 0 && millis() - g_lastEta < ETA_REFRESH_MS) return;
     if (g_etaStep == 0) g_etaStep = 1;
     if (g_etaStep == 1) {
-        if (!g_colA.ok) fetchCol(g_profiles[g_activeProfile].busA, g_colA);
+        fetchCol(g_profiles[g_activeProfile].busA, g_colA);
         g_etaStep = 2;
         return;
     }
     if (g_etaStep == 2) {
-        if (!g_colB.ok) fetchCol(g_profiles[g_activeProfile].busB, g_colB);
+        fetchCol(g_profiles[g_activeProfile].busB, g_colB);
         g_etaStep = 0;
         g_lastEta = millis();
         g_bootTasksDone = true;
@@ -832,11 +842,33 @@ public:
         (void)h;
         c.fillSprite(C_BG);
         drawBusStatusChrome(c);
+        c.drawFastVLine(BUS_DIVIDER_X, 22, 96, C_DARKGREY);
         drawCol(c, BUS_COL_A_X, g_colA, g_profiles[g_activeProfile].busA);
         drawCol(c, BUS_COL_B_X, g_colB, g_profiles[g_activeProfile].busB);
     }
 
 private:
+    static const lgfx::IFont* primaryEtaFont() {
+        return &fonts::Font7;
+    }
+
+    static int nthEtaMins(const BusColState& col, int index) {
+        int found = 0;
+        for (int i = 0; i < ETA_SLOTS; ++i) {
+            if (!col.slots[i].valid) continue;
+            if (found == index) return col.slots[i].minutes;
+            ++found;
+        }
+        return -1;
+    }
+
+    static int firstEtaMins(const BusColState& col) {
+        return nthEtaMins(col, 0);
+    }
+
+    static int secondEtaMins(const BusColState& col) {
+        return nthEtaMins(col, 1);
+    }
     static void shortenLabel(char* dst, size_t n, const char* src) {
         if (!src || !src[0]) { dst[0] = '\0'; return; }
         strlcpy(dst, src, n);
@@ -847,18 +879,11 @@ private:
     }
 
     static const char* resolveDest(const BusColState& col, const BusStopCfg& cfg, char* buf, size_t n) {
+        if (cfg.dest[0]) return cfg.dest;
         if (cfg.name[0]) return cfg.name;
         if (col.stop[0]) return col.stop;
-        if (cfg.dest[0]) return cfg.dest;
         shortenLabel(buf, n, col.stop);
         return buf;
-    }
-
-    static int firstEtaMins(const BusColState& col) {
-        for (int i = 0; i < ETA_SLOTS; ++i) {
-            if (col.slots[i].valid) return col.slots[i].minutes;
-        }
-        return -1;
     }
 
     void drawCol(M5Canvas& c, int cx, const BusColState& col, const BusStopCfg& cfg) {
@@ -870,26 +895,26 @@ private:
         snprintf(routeLine, sizeof(routeLine), "%s %s", route, dest);
 
         if (g_cfg.english)
-            drawMc(c, &fonts::Font2, routeLine, cx, 18, TFT_WHITE);
+            drawMc(c, &fonts::Font2, routeLine, cx, BUS_ROW_ROUTE_Y, TFT_WHITE);
         else
-            drawMc(c, &fonts::efontTW_16, routeLine, cx, 18, TFT_WHITE);
+            drawMc(c, &fonts::efontTW_16, routeLine, cx, BUS_ROW_ROUTE_Y, TFT_WHITE);
 
         int mins = firstEtaMins(col);
         if (mins < 0) {
-            drawMc(c, &fonts::Font7, "--", cx, 75, C_DIM);
+            drawMc(c, primaryEtaFont(), "--", cx, BUS_ROW_ETA_Y, C_DIM);
             return;
         }
 
-        int displayMins = mins <= 0 ? 0 : mins;
+        int displayMins = mins;
         char num[8];
         snprintf(num, sizeof(num), "%d", displayMins);
-        drawMc(c, &fonts::Font7, num, cx, 75, etaColor(displayMins));
+        drawMc(c, primaryEtaFont(), num, cx, BUS_ROW_ETA_Y, etaColor(displayMins));
 
-        if (displayMins > 0) {
-            if (g_cfg.english)
-                drawMc(c, &fonts::Font0, "m", cx, 118, C_DIM);
-            else
-                drawMc(c, &fonts::efontTW_12, "\xe5\x88\x86", cx, 118, C_DIM);
+        int nextMins = secondEtaMins(col);
+        if (nextMins >= 0) {
+            char nextLine[20];
+            snprintf(nextLine, sizeof(nextLine), "next %d", nextMins < 0 ? 0 : nextMins);
+            drawMc(c, &fonts::Font2, nextLine, cx, BUS_ROW_NEXT_Y, TFT_SILVER);
         }
     }
 };

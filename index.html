@@ -184,12 +184,10 @@
             <button class="btn btn-secondary btn-inline" id="btnSearchA" type="button" data-always-enabled="1">🔍 搜尋車站</button>
           </div>
           <datalist id="routesA"></datalist>
-          <label class="kmb-only-a">Direction</label>
-          <select id="dirA" class="kmb-only-a"><option value="outbound">Outbound 去程</option><option value="inbound">Inbound 回程</option></select>
-          <label class="ctb-only-a">Variant</label>
-          <select id="variantA" class="ctb-only-a hidden" disabled><option>—</option></select>
+          <label>Variant</label>
+          <select id="variantA" class="variant-select" disabled><option value="">—</option></select>
           <label>Stop</label>
-          <select id="stopA" class="stop-select" disabled><option value="">— 請先搜尋車站 —</option></select>
+          <select id="stopA" class="stop-select" disabled><option value="">—</option></select>
           <div id="etaPreviewA" class="eta-preview eta-card">— 選擇車站後顯示 Live ETA —</div>
         </div>
         <div class="bus-col">
@@ -202,16 +200,15 @@
             <button class="btn btn-secondary btn-inline" id="btnSearchB" type="button" data-always-enabled="1">🔍 搜尋車站</button>
           </div>
           <datalist id="routesB"></datalist>
-          <label class="kmb-only-b">Direction</label>
-          <select id="dirB" class="kmb-only-b"><option value="outbound">Outbound 去程</option><option value="inbound" selected>Inbound 回程</option></select>
-          <label class="ctb-only-b">Variant</label>
-          <select id="variantB" class="ctb-only-b hidden" disabled><option>—</option></select>
+          <label>Variant</label>
+          <select id="variantB" class="variant-select" disabled><option value="">—</option></select>
           <label>Stop</label>
-          <select id="stopB" class="stop-select" disabled><option value="">— 請先搜尋車站 —</option></select>
+          <select id="stopB" class="stop-select" disabled><option value="">—</option></select>
           <div id="etaPreviewB" class="eta-preview eta-card">— 選擇車站後顯示 Live ETA —</div>
         </div>
       </div>
       <button class="btn btn-secondary btn-sm" id="btnSyncRoutes" type="button" data-i18n="syncRoutes" data-always-enabled="1">🔄 同步路線</button>
+      <label class="check-row" style="margin-top:10px;"><input type="checkbox" id="autoSync30"> <span data-i18n="autoSync30">🔄 30s 自動同步</span></label>
       <button class="btn" id="btnSendBus" type="button" data-i18n="sendBus" data-requires-mqtt="1">📡 發送 Profile 設定至 M5</button>
     </div>
   </div>
@@ -313,7 +310,7 @@ const I18N = {
     connect:'連線', disconnect:'中斷',
     tabBus:'巴士 ETA', tabStock:'股票報價', tabWeather:'天氣同步', tabSettings:'系統設定',
     busProfiles:'雙欄巴士 Profile 設定', profileName:'Profile 顯示名稱', colA:'左欄 A', colB:'右欄 B',
-    syncRoutes:'🔄 同步路線', sendBus:'📡 發送 Profile 設定至 M5',
+    syncRoutes:'🔄 同步路線', autoSync30:'🔄 30s 自動同步', sendBus:'📡 發送 Profile 設定至 M5',
     stockTitle:'港股 / 美股關注清單', fetchStock:'📈 抓取 Yahoo 並推送至 M5', autoStock:'自動 60 秒',
     weatherTitle:'香港天文台 HKO API 同步',
     weatherDesc:'由瀏覽器對接 HKO Open Data，清洗預報與警告後推送至 m5bus_<ID>/weather（retain: false）。',
@@ -329,7 +326,7 @@ const I18N = {
     connect:'Connect', disconnect:'Disconnect',
     tabBus:'Bus ETA', tabStock:'Stock Quote', tabWeather:'Weather Sync', tabSettings:'Settings',
     busProfiles:'Dual-Column Bus Profiles', profileName:'Profile Name', colA:'Column A', colB:'Column B',
-    syncRoutes:'🔄 Sync routes', sendBus:'📡 Push Bus Profile to M5',
+    syncRoutes:'🔄 Sync routes', autoSync30:'🔄 30s Auto-Sync', sendBus:'📡 Push Bus Profile to M5',
     stockTitle:'HK / US Stock Watchlist', fetchStock:'📈 Fetch Yahoo & Push to M5', autoStock:'Auto 60s',
     weatherTitle:'HKO Open Data Sync',
     weatherDesc:'Fetches HKO warnings and 9-day forecast, then pushes to m5bus_<ID>/weather (retain: false).',
@@ -376,6 +373,8 @@ function log(msg, type='info') {
 
 const MQTT_WS = 'wss://broker.hivemq.com:8884/mqtt';
 const KMB_API = 'https://data.etabus.gov.hk/v1/transport/kmb';
+const KMB_BUS_STOP = 'https://data.etabus.gov.hk/v1/bus-stop';
+const CORS_PROXY = 'https://corsproxy.io/?';
 const CTB = 'https://rt.data.gov.hk/v2/transport/citybus';
 const HKO_BASE = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php';
 const PROFILE_COUNT = 4;
@@ -385,12 +384,13 @@ const DEVICE_KEY = 'm5-device-id';
 let mqttClient = null, connected = false, lastStatus = null;
 let uiProfile = 0, kmbRoutes = [], ctbRoutes = [], kmbNums = [], ctbNums = [], ctbStops = null;
 let liveWifiNetworks = [];
-let busEtaTimer = null;
+let busEtaTimer = null, autoSyncTimer = null;
 const stopNameCache = new Map();
+const kmbDestCache = new Map();
 /** Global live ETA state — pushed to MQTT on send */
 const busLiveState = {
-  A: { route: '', name: '', eta: -1, stopId: '' },
-  B: { route: '', name: '', eta: -1, stopId: '' }
+  A: { route: '', name: '', dest: '', eta: -1, stopId: '', etas: [] },
+  B: { route: '', name: '', dest: '', eta: -1, stopId: '', etas: [] }
 };
 
 function getId() { return ($('deviceId').value||'').trim().toUpperCase().replace(/[^0-9A-F]/g,''); }
@@ -427,8 +427,8 @@ function translateAndShortenName(rawText) {
 function defaultDb() {
   const profiles = Array.from({length:PROFILE_COUNT}, (_,i) => ({
     name: lang==='en'?['Commute','Return','Holiday','Nearby'][i]:['返工','放工','假日','屋企'][i],
-    busA:{co:'KMB',route:i===0?'76K':'',stopId:i===0?'68C988CE5394BAE7':'',bound:'O',svc:'1',stopName:i===0?(lang==='en'?'Long Ping':'朗屏'):''},
-    busB:{co:'KMB',route:i===0?'76K':'',stopId:i===0?'B0D79D5CE512B9EC':'',bound:'I',svc:'1',stopName:i===0?(lang==='en'?'Sheung Shui':'上水'):''}
+    busA:{co:'KMB',route:i===0?'76K':'',stopId:i===0?'68C988CE5394BAE7':'',bound:'O',svc:'1',stopName:i===0?(lang==='en'?'Long Ping':'朗屏'):'',dest:i===0?(lang==='en'?'Sheung Shui':'上水'):''},
+    busB:{co:'KMB',route:i===0?'76K':'',stopId:i===0?'B0D79D5CE512B9EC':'',bound:'I',svc:'1',stopName:i===0?(lang==='en'?'Sheung Shui':'上水'):'',dest:i===0?(lang==='en'?'Long Ping':'朗屏'):''}
   }));
   return {v:6, activeProfile:0, profiles, stocks:[
     {symbol:'0700.HK',name:'Tencent'},{symbol:'0941.HK',name:'China Mobile'},
@@ -457,57 +457,258 @@ function etaMinutesFromIso(iso) {
   return Math.max(0, Math.round((t - Date.now()) / 60000));
 }
 
-function sideKeyFromSelect(selectElemId) {
-  return selectElemId === 'stopB' ? 'B' : 'A';
+function sideFromStopId(stopSelectId) {
+  return stopSelectId === 'stopB' ? 'B' : 'A';
 }
 
-function kmbDirectionForSide(side) {
-  const el = $(side === 'B' ? 'dirB' : 'dirA');
-  return el?.value === 'inbound' ? 'inbound' : 'outbound';
-}
-
-async function kmbFetchRouteStops(route, direction = 'outbound', serviceType = '1') {
-  const dir = direction === 'inbound' ? 'inbound' : 'outbound';
-  const url = `${KMB_API}/route-stop/${encodeURIComponent(route)}/${dir}/${serviceType}`;
-  const data = await safeFetch(url, `KMB route-stop ${route}/${dir}`);
-  return Array.isArray(data.data) ? data.data : [];
-}
-
-async function kmbFetchRouteStopsWithFallback(route, preferredDirection, serviceType = '1') {
-  let rows = await kmbFetchRouteStops(route, preferredDirection, serviceType);
-  if (rows.length) return { rows, direction: preferredDirection };
-  const alt = preferredDirection === 'inbound' ? 'outbound' : 'inbound';
-  rows = await kmbFetchRouteStops(route, alt, serviceType);
-  if (rows.length) {
-    log(lang === 'en' ? `Fallback to ${alt} for ${route}` : `${route} 改用 ${alt} 方向`, 'warn');
-    return { rows, direction: alt };
+async function fetchKmbJson(urls, label) {
+  let lastErr;
+  const list = Array.isArray(urls) ? urls : [urls];
+  for (const url of list) {
+    try {
+      const r = await fetch(url, { mode: 'cors', cache: 'no-store' });
+      if (!r.ok) throw new Error(`${label} HTTP ${r.status}`);
+      const data = await r.json();
+      if (data?.code && Number(data.code) >= 400) throw new Error(data.message || `${label} error`);
+      return data;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[${label}] ${url} failed:`, err?.message || err);
+    }
   }
-  return { rows: [], direction: preferredDirection };
+  throw lastErr || new Error(`${label} failed`);
+}
+
+function kmbRouteMeta(route) {
+  const rows = kmbRoutes.filter(r => r.route === route);
+  const out = rows.find(r => r.bound === 'O') || rows[0];
+  const inn = rows.find(r => r.bound === 'I') || rows[1] || rows[0];
+  return {
+    outboundDest: translateAndShortenName(out?.dest_tc || out?.dest_en || ''),
+    inboundDest: translateAndShortenName(inn?.dest_tc || inn?.dest_en || '')
+  };
+}
+
+function kmbDirParam(direction) {
+  return direction === 'inbound' ? 'inbound' : 'outbound';
+}
+
+async function kmbFetchOfficialDest(route, direction) {
+  const dir = kmbDirParam(direction);
+  const key = `${route}|${dir}`;
+  if (kmbDestCache.has(key)) return kmbDestCache.get(key);
+
+  const busStopUrl = `${KMB_BUS_STOP}/route/KMB/${encodeURIComponent(route)}/${dir}/1`;
+  const transportUrl = `${KMB_API}/route/${encodeURIComponent(route)}/${dir}/1`;
+  let dest = '';
+  try {
+    const data = await fetchKmbJson([
+      busStopUrl,
+      `${CORS_PROXY}${busStopUrl}`,
+      transportUrl,
+      `${CORS_PROXY}${transportUrl}`
+    ], `KMB route dest ${route}/${dir}`);
+    const row = data?.data || {};
+    dest = translateAndShortenName(row.dest_tc || row.dest_en || row.dest || '');
+  } catch (err) {
+    console.warn('kmbFetchOfficialDest failed, using route list:', err?.message || err);
+  }
+
+  if (!dest) {
+    const meta = kmbRouteMeta(route);
+    dest = dir === 'inbound' ? meta.inboundDest : meta.outboundDest;
+  }
+  if (!dest) {
+    const bound = dir === 'inbound' ? 'I' : 'O';
+    const rows = kmbRoutes.filter(r => r.route === route);
+    const row = rows.find(r => r.bound === bound && String(r.service_type) === '1')
+      || rows.find(r => r.bound === bound) || rows[0];
+    dest = translateAndShortenName(row?.dest_tc || row?.dest_en || '');
+  }
+
+  kmbDestCache.set(key, dest || '');
+  return dest || '';
+}
+
+function populateKmbVariantDropdown(route, variantSelectId, preferred = 'outbound') {
+  const sel = $(variantSelectId);
+  const meta = kmbRouteMeta(route);
+  sel.innerHTML = '';
+  const outboundLabel = meta.outboundDest
+    ? (lang === 'en' ? `Outbound (${meta.outboundDest})` : `Outbound (往 ${meta.outboundDest})`)
+    : (lang === 'en' ? 'Outbound' : 'Outbound 去程');
+  const inboundLabel = meta.inboundDest
+    ? (lang === 'en' ? `Inbound (${meta.inboundDest})` : `Inbound (往 ${meta.inboundDest})`)
+    : (lang === 'en' ? 'Inbound' : 'Inbound 回程');
+  [
+    { value: 'outbound', label: outboundLabel },
+    { value: 'inbound', label: inboundLabel }
+  ].forEach(o => {
+    const el = document.createElement('option');
+    el.value = o.value;
+    el.textContent = o.label;
+    sel.appendChild(el);
+  });
+  sel.value = preferred === 'inbound' ? 'inbound' : 'outbound';
+  sel.disabled = false;
+}
+
+async function fetchKmbRouteStopRows(route, direction) {
+  const dir = direction === 'inbound' ? 'inbound' : 'outbound';
+  const busStopUrl = `${KMB_BUS_STOP}/route-stop/KMB/${encodeURIComponent(route)}/${dir}/1`;
+  const transportUrl = `${KMB_API}/route-stop/${encodeURIComponent(route)}/${dir}/1`;
+  const data = await fetchKmbJson([
+    busStopUrl,
+    `${CORS_PROXY}${busStopUrl}`,
+    transportUrl,
+    `${CORS_PROXY}${transportUrl}`
+  ], `KMB route-stop ${route}/${dir}`);
+  return Array.isArray(data?.data) ? data.data : [];
 }
 
 async function kmbFetchStopName(stopId) {
   if (!stopId) return '';
   if (stopNameCache.has(stopId)) return stopNameCache.get(stopId);
-  const url = `${KMB_API}/stop/${encodeURIComponent(stopId)}`;
-  const data = await safeFetch(url, `KMB stop ${stopId.slice(0, 8)}`);
-  const row = data.data || {};
+  const busStopUrl = `${KMB_BUS_STOP}/${encodeURIComponent(stopId)}`;
+  const transportUrl = `${KMB_API}/stop/${encodeURIComponent(stopId)}`;
+  const data = await fetchKmbJson([
+    busStopUrl,
+    `${CORS_PROXY}${busStopUrl}`,
+    transportUrl,
+    `${CORS_PROXY}${transportUrl}`
+  ], `KMB stop ${stopId.slice(0, 8)}`);
+  const row = data?.data || data || {};
   const name = translateAndShortenName(row.name_tc || row.name_en || row.name || '');
-  stopNameCache.set(stopId, name);
-  return name;
+  stopNameCache.set(stopId, name || stopId);
+  return stopNameCache.get(stopId);
 }
 
 async function kmbFetchEtaMinutes(stopId, route, serviceType = '1') {
-  if (!stopId || !route) return -1;
-  const url = `${KMB_API}/eta/${encodeURIComponent(stopId)}/${encodeURIComponent(route)}/${serviceType}`;
-  const data = await safeFetch(url, `KMB ETA ${route}`);
-  const rows = Array.isArray(data.data) ? data.data : [];
-  let best = -1;
-  for (const row of rows) {
-    const m = etaMinutesFromIso(row.eta);
-    if (m < 0) continue;
-    if (best < 0 || m < best) best = m;
+  const etas = await kmbFetchAllEtaMinutes(stopId, route, serviceType);
+  return etas.length ? etas[0] : -1;
+}
+
+async function kmbFetchAllEtaMinutes(stopId, route, serviceType = '1') {
+  if (!stopId || !route) return [];
+  const busStopUrl = `${KMB_BUS_STOP}/eta/${encodeURIComponent(stopId)}/${encodeURIComponent(route)}`;
+  const transportUrl = `${KMB_API}/eta/${encodeURIComponent(stopId)}/${encodeURIComponent(route)}/${serviceType}`;
+  try {
+    const data = await fetchKmbJson([
+      busStopUrl,
+      `${CORS_PROXY}${busStopUrl}`,
+      transportUrl,
+      `${CORS_PROXY}${transportUrl}`
+    ], `KMB ETA ${route}`);
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    const mins = rows
+      .map(row => etaMinutesFromIso(row?.eta))
+      .filter(m => m >= 0)
+      .sort((a, b) => a - b);
+    const unique = [];
+    for (const m of mins) {
+      if (!unique.length || unique[unique.length - 1] !== m) unique.push(m);
+      if (unique.length >= 3) break;
+    }
+    return unique;
+  } catch (err) {
+    console.warn('kmbFetchAllEtaMinutes failed:', err);
+    return [];
   }
-  return best;
+}
+
+async function syncKmbRoute(route, targetVariantSelectId, targetStopSelectId, opts = {}) {
+  route = String(route || '').trim().toUpperCase();
+  if (!route) {
+    toast(lang === 'en' ? 'Enter a route first' : '請先輸入路線', 'err');
+    return;
+  }
+  const side = sideFromStopId(targetStopSelectId);
+  const previewId = side === 'B' ? 'etaPreviewB' : 'etaPreviewA';
+  const variantSel = $(targetVariantSelectId);
+  const stopSel = $(targetStopSelectId);
+  const db = loadDb();
+  const saved = db.profiles[uiProfile][side === 'B' ? 'busB' : 'busA'];
+  const refreshVariants = opts.refreshVariants !== false;
+  const preferredDir = (variantSel?.value === 'inbound' || variantSel?.value === 'outbound')
+    ? variantSel.value
+    : (saved.bound === 'I' ? 'inbound' : (side === 'B' ? 'inbound' : 'outbound'));
+
+  stopSel.innerHTML = '<option value="">Loading…</option>';
+  stopSel.disabled = true;
+  clearEtaPreview(previewId, side, true);
+
+  if (refreshVariants) populateKmbVariantDropdown(route, targetVariantSelectId, preferredDir);
+  let direction = variantSel.value || preferredDir || 'outbound';
+  let rows = await fetchKmbRouteStopRows(route, direction);
+  if (!rows.length) {
+    const alt = direction === 'inbound' ? 'outbound' : 'inbound';
+    rows = await fetchKmbRouteStopRows(route, alt);
+    if (rows.length) {
+      direction = alt;
+      variantSel.value = alt;
+      log(lang === 'en' ? `Fallback to ${alt} for ${route}` : `${route} 改用 ${alt} 方向`, 'warn');
+    }
+  }
+  if (!rows.length) {
+    throw new Error(lang === 'en' ? `No stops for route ${route}` : `找不到路線 ${route} 的車站`);
+  }
+
+  const officialDest = await kmbFetchOfficialDest(route, direction);
+  busLiveState[side].dest = officialDest;
+  busLiveState[side].route = route;
+  const dbKey = side === 'B' ? 'busB' : 'busA';
+  db.profiles[uiProfile][dbKey].dest = officialDest;
+  saveDb(db);
+
+  const uniqueStops = [];
+  const seen = new Set();
+  for (const r of rows) {
+    const stopId = r.stop || r.stop_id;
+    if (!stopId || seen.has(stopId)) continue;
+    seen.add(stopId);
+    uniqueStops.push(stopId);
+  }
+
+  const names = await Promise.all(uniqueStops.map(async (stopId) => {
+    try {
+      return { stopId, name: await kmbFetchStopName(stopId) };
+    } catch (e) {
+      console.warn('stop name lookup failed:', stopId, e);
+      return { stopId, name: stopId };
+    }
+  }));
+
+  stopSel.innerHTML = '';
+  names.forEach(({ stopId, name }) => {
+    const o = document.createElement('option');
+    o.value = stopId;
+    o.textContent = name || stopId;
+    o.dataset.name = name || stopId;
+    stopSel.appendChild(o);
+  });
+  stopSel.disabled = false;
+
+  if (saved.stopId && [...stopSel.options].some(o => o.value === saved.stopId)) {
+    stopSel.value = saved.stopId;
+  } else if (stopSel.options.length) {
+    stopSel.selectedIndex = 0;
+  }
+
+  const opt = stopSel.selectedOptions[0];
+  const stopName = opt?.dataset?.name || opt?.textContent?.trim() || '';
+  const stopId = stopSel.value;
+  const eta = await fetchLiveEtaForSelect(stopId, route, previewId, side);
+  const etaTxt = eta >= 0 ? `${eta} mins` : (lang === 'en' ? 'N/A' : '無');
+  log(lang === 'en'
+    ? `Loaded ${route} stop: ${stopName} (ETA: ${etaTxt})`
+    : `成功載入 ${route} 站點: ${stopName} (ETA: ${etaTxt})`, 'ok');
+  if (!opts.silent) toast(lang === 'en' ? `${names.length} stops loaded` : `已載入 ${names.length} 個車站`, 'ok');
+  return { route, direction, count: names.length, stopId, stopName, eta };
+}
+
+function kmbDirectionForSide(side) {
+  const el = $(side === 'B' ? 'variantB' : 'variantA');
+  return el?.value === 'inbound' ? 'inbound' : 'outbound';
 }
 
 function renderEtaPreview(previewElemId, side, mins, route = '', name = '', stopId = '') {
@@ -516,7 +717,7 @@ function renderEtaPreview(previewElemId, side, mins, route = '', name = '', stop
   if (mins < 0) {
     el.innerHTML = lang === 'en' ? '⚠️ No upcoming bus' : '⚠️ 暫無班次';
     el.className = 'eta-preview eta-card warn';
-    busLiveState[side] = { route: route || '', name: name || '', eta: -1, stopId: stopId || '' };
+    busLiveState[side] = { route: route || '', name: name || '', dest: busLiveState[side]?.dest || '', eta: -1, stopId: stopId || '', etas: [] };
     return;
   }
   const minsLabel = lang === 'en' ? 'mins' : '分鐘';
@@ -525,16 +726,17 @@ function renderEtaPreview(previewElemId, side, mins, route = '', name = '', stop
     ? `<div>🟢 Live ETA: ${mins} ${minsLabel}</div><div style="font-size:11px;font-weight:500;margin-top:4px;opacity:0.85">${sub}</div>`
     : `<div>🟢 Live ETA: ${mins} ${minsLabel}</div>`;
   el.className = 'eta-preview eta-card ' + (mins <= 5 ? 'ok-red' : mins <= 10 ? 'ok-orange' : 'ok-green');
-  busLiveState[side] = { route, name, eta: mins, stopId };
+  busLiveState[side] = { route, name, dest: busLiveState[side]?.dest || '', eta: mins, stopId, etas: busLiveState[side]?.etas || (mins >= 0 ? [mins] : []) };
 }
 
-function clearEtaPreview(previewElemId, side) {
+function clearEtaPreview(previewElemId, side, keepDest = false) {
   const el = $(previewElemId);
+  const prevDest = keepDest ? (busLiveState[side]?.dest || '') : '';
   if (el) {
     el.textContent = lang === 'en' ? '— Select a stop for Live ETA —' : '— 選擇車站後顯示 Live ETA —';
     el.className = 'eta-preview eta-card';
   }
-  busLiveState[side] = { route: '', name: '', eta: -1, stopId: '' };
+  busLiveState[side] = { route: '', name: '', dest: prevDest, eta: -1, stopId: '' };
 }
 
 async function fetchLiveEtaForSelect(stopId, route, previewElemId, side = null) {
@@ -547,9 +749,10 @@ async function fetchLiveEtaForSelect(stopId, route, previewElemId, side = null) 
     return -1;
   }
   try {
-    const eta = await kmbFetchEtaMinutes(stopId, route, '1');
+    const etas = await kmbFetchAllEtaMinutes(stopId, route, '1');
+    const eta = etas.length ? etas[0] : -1;
+    busLiveState[sideKey].etas = etas;
     renderEtaPreview(previewElemId, sideKey, eta, route, name, stopId);
-    if (eta >= 0) log(`${sideKey}: ${route} ${name} → ${eta} min`, 'ok');
     return eta;
   } catch (err) {
     console.error('fetchLiveEtaForSelect failed:', err);
@@ -563,112 +766,63 @@ async function fetchLiveEtaForSelect(stopId, route, previewElemId, side = null) 
 
 async function searchBusStops(routeInputId, selectElemId, previewElemId) {
   const route = ($(routeInputId).value || '').trim().toUpperCase();
-  const side = sideKeyFromSelect(selectElemId);
-  const stopSel = $(selectElemId);
-  if (!route) {
-    toast(lang === 'en' ? 'Enter a route first' : '請先輸入路線', 'err');
-    return;
-  }
-  stopSel.innerHTML = '<option value="">Loading…</option>';
-  stopSel.disabled = true;
-  clearEtaPreview(previewElemId, side);
-
+  const side = sideFromStopId(selectElemId);
   if (getCo(side) === 'CTB') {
+    populateVariants(route, side);
     await loadCtbStops(side);
     return;
   }
-
-  try {
-    const preferred = kmbDirectionForSide(side);
-    const { rows, direction } = await kmbFetchRouteStopsWithFallback(route, preferred, '1');
-    if (!rows.length) {
-      throw new Error(lang === 'en' ? `No stops found for route ${route}` : `找不到路線 ${route} 的車站`);
-    }
-    if (direction !== preferred) {
-      $(side === 'B' ? 'dirB' : 'dirA').value = direction;
-    }
-
-    const uniqueStops = [];
-    const seen = new Set();
-    for (const r of rows) {
-      const stopId = r.stop || r.stop_id;
-      if (!stopId || seen.has(stopId)) continue;
-      seen.add(stopId);
-      uniqueStops.push(stopId);
-    }
-
-    const names = await Promise.all(uniqueStops.map(async (stopId) => {
-      try {
-        return { stopId, name: await kmbFetchStopName(stopId) };
-      } catch (e) {
-        console.warn('stop name lookup failed:', stopId, e);
-        return { stopId, name: stopId };
-      }
-    }));
-
-    stopSel.innerHTML = '';
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = lang === 'en' ? '— select stop —' : '— 選擇車站 —';
-    stopSel.appendChild(placeholder);
-
-    names.forEach(({ stopId, name }) => {
-      const o = document.createElement('option');
-      o.value = stopId;
-      o.textContent = name || stopId;
-      o.dataset.name = name || stopId;
-      stopSel.appendChild(o);
-    });
-    stopSel.disabled = false;
-
-    const db = loadDb();
-    const saved = db.profiles[uiProfile][side === 'B' ? 'busB' : 'busA'];
-    if (saved.stopId && [...stopSel.options].some(o => o.value === saved.stopId)) {
-      stopSel.value = saved.stopId;
-      await fetchLiveEtaForSelect(saved.stopId, route, previewElemId, side);
-    }
-
-    log(lang === 'en' ? `${side}: ${names.length} stops (${direction})` : `${side}：已載入 ${names.length} 個車站 (${direction})`, 'ok');
-    toast(lang === 'en' ? `${names.length} stops loaded` : `已載入 ${names.length} 個車站`, 'ok');
-  } catch (err) {
-    console.error('searchBusStops failed:', err);
-    stopSel.innerHTML = '<option value="">— error —</option>';
-    stopSel.disabled = true;
-    const msg = err?.message || String(err);
-    log(msg, 'err');
-    toast(msg, 'err');
-  }
+  const variantId = side === 'B' ? 'variantB' : 'variantA';
+  await syncKmbRoute(route, variantId, selectElemId);
 }
 
-async function liveBusCol(side) {
+async function liveBusCol(side, forceRefresh = false) {
   const snap = snapshot(side);
   const name = translateAndShortenName(snap.stopName || '');
-  const base = { co: snap.co, route: snap.route, stop: snap.stopId, bound: snap.bound, svc: snap.svc, name };
-  if (!snap.stopId || !snap.route) return { ...base, eta: -1 };
+  let dest = translateAndShortenName(snap.dest || busLiveState[side]?.dest || '');
+  const base = { co: snap.co, route: snap.route, stop: snap.stopId, bound: snap.bound, svc: snap.svc, name, dest };
+  if (!snap.route) return { ...base, eta: -1, etas: [] };
+
+  if (snap.co === 'KMB' && !dest) {
+    const dir = snap.bound === 'I' ? 'inbound' : 'outbound';
+    try { dest = await kmbFetchOfficialDest(snap.route, dir); } catch {}
+    busLiveState[side].dest = dest;
+  }
+
+  if (!snap.stopId) return { ...base, dest, eta: -1, etas: [] };
   if (snap.co === 'KMB') {
     const previewId = side === 'B' ? 'etaPreviewB' : 'etaPreviewA';
     const cached = busLiveState[side];
-    if (cached.stopId === snap.stopId && cached.route === snap.route && cached.eta >= 0) {
-      return { ...base, eta: cached.eta };
+    if (!forceRefresh && cached.stopId === snap.stopId && cached.route === snap.route && cached.eta >= 0) {
+      return { ...base, dest: dest || cached.dest, eta: cached.eta, etas: cached.etas || [cached.eta] };
     }
     try {
-      const eta = await fetchLiveEtaForSelect(snap.stopId, snap.route, previewId, side);
-      return { ...base, eta };
+      const etas = await kmbFetchAllEtaMinutes(snap.stopId, snap.route, '1');
+      const eta = etas.length ? etas[0] : -1;
+      busLiveState[side].etas = etas;
+      renderEtaPreview(previewId, side, eta, snap.route, name, snap.stopId);
+      return { ...base, dest: dest || busLiveState[side].dest, eta, etas };
     } catch (err) {
       console.error(`liveBusCol ${side} failed:`, err);
-      return { ...base, eta: -1 };
+      return { ...base, dest, eta: -1, etas: [] };
     }
   }
-  return { ...base, eta: -1 };
+  return { ...base, dest, eta: -1, etas: [] };
 }
 
 function busM5Payload(col) {
   const eta = typeof col.eta === 'number' ? col.eta : -1;
-  return {
+  const etas = Array.isArray(col.etas) ? col.etas : (eta >= 0 ? [eta] : []);
+  const payload = {
     route: col.route || '',
-    name: col.name || '',
+    dest: translateAndShortenName(col.dest || col.name || ''),
+    stop: col.stop || '',
+    stop_id: col.stop || '',
     eta: eta < 0 ? -1 : Math.max(0, Math.round(eta))
   };
+  if (etas[1] != null && etas[1] >= 0) payload.eta2 = Math.max(0, Math.round(etas[1]));
+  if (etas[2] != null && etas[2] >= 0) payload.eta3 = Math.max(0, Math.round(etas[2]));
+  return payload;
 }
 
 async function buildConfigPayload(activeModule) {
@@ -678,10 +832,10 @@ async function buildConfigPayload(activeModule) {
   const profileRows = db.profiles.map((pr, i) => ({
     id: i, name: pr.name, busA: busFw(pr.busA), busB: busFw(pr.busB)
   }));
-  let busA = { route: '', name: '', eta: -1 };
-  let busB = { route: '', name: '', eta: -1 };
+  let busA = { route: '', dest: '', eta: -1 };
+  let busB = { route: '', dest: '', eta: -1 };
   try {
-    const [a, b] = await Promise.all([liveBusCol('A'), liveBusCol('B')]);
+    const [a, b] = await Promise.all([liveBusCol('A', true), liveBusCol('B', true)]);
     busA = busM5Payload(a);
     busB = busM5Payload(b);
   } catch (err) {
@@ -740,6 +894,7 @@ function disconnect() {
   if (weatherTimer) { clearInterval(weatherTimer); weatherTimer=null; }
   if (stockTimer) { clearInterval(stockTimer); stockTimer=null; }
   if (busEtaTimer) { clearInterval(busEtaTimer); busEtaTimer=null; }
+  if (autoSyncTimer) { clearInterval(autoSyncTimer); autoSyncTimer=null; }
   setCloud(false); setLive(false);
   log(lang==='en'?'Disconnected':'已中斷連線','warn');
 }
@@ -1087,13 +1242,52 @@ async function pushStock() {
   }
 }
 
+async function runAutoSyncCycle() {
+  if (!connected) return;
+  try {
+    const db = loadDb();
+    const slot = db.stocks[0] || { symbol: '0700.HK', name: 'Tencent' };
+    const [wPayload, sPayload] = await Promise.all([
+      buildWeather().catch(() => null),
+      buildStock(slot.symbol, slot.name).catch(() => null)
+    ]);
+    if (wPayload) {
+      renderWeatherPreview(wPayload);
+      if ($('weatherPreview')) $('weatherPreview').textContent = JSON.stringify(wPayload, null, 2);
+    }
+    if (sPayload) {
+      renderStockPreview(sPayload);
+      if ($('stockPreview')) $('stockPreview').textContent = JSON.stringify(sPayload, null, 2);
+    }
+    const configPayload = await buildConfigPayload('bus');
+    await pubJson('config', configPayload);
+    if (wPayload) await pubJson('weather', wPayload);
+    if (sPayload) await pubJson('stock', sPayload);
+    log(lang === 'en'
+      ? '🔄 30s auto-sync triggered, latest ETAs pushed to M5'
+      : '🔄 30s 自動同步已觸發，最新 ETA 已推送至 M5', 'ok');
+  } catch (err) {
+    console.error('runAutoSyncCycle failed:', err);
+    log(err?.message || String(err), 'err');
+  }
+}
+
 function startAutoSync() {
   if (weatherTimer) clearInterval(weatherTimer);
   if (stockTimer) clearInterval(stockTimer);
   if (busEtaTimer) clearInterval(busEtaTimer);
-  if ($('weatherAuto').checked) weatherTimer = setInterval(() => pushWeather().catch(e=>log(e.message,'err')), 30000);
-  if ($('stockAuto').checked) stockTimer = setInterval(() => pushStock().catch(e=>log(e.message,'err')), 60000);
-  busEtaTimer = setInterval(() => pushBusEta().catch(e=>log(e.message,'err')), 30000);
+  if (autoSyncTimer) clearInterval(autoSyncTimer);
+  weatherTimer = stockTimer = busEtaTimer = autoSyncTimer = null;
+
+  if ($('autoSync30')?.checked) {
+    localStorage.setItem('m5-autosync-30', '1');
+    runAutoSyncCycle().catch(e => log(e.message, 'err'));
+    autoSyncTimer = setInterval(() => runAutoSyncCycle().catch(e => log(e.message, 'err')), 30000);
+    return;
+  }
+  localStorage.setItem('m5-autosync-30', '0');
+  if ($('weatherAuto').checked) weatherTimer = setInterval(() => pushWeather().catch(e => log(e.message, 'err')), 30000);
+  if ($('stockAuto').checked) stockTimer = setInterval(() => pushStock().catch(e => log(e.message, 'err')), 60000);
 }
 
 function getCo(side) { return $(side==='B'?'coB':'coA').value==='CTB'?'CTB':'KMB'; }
@@ -1112,16 +1306,32 @@ function populateRoutes() {
 async function syncRoutes() {
   try {
     const [kData, cData] = await Promise.all([
-      safeFetch(`${KMB_API}/route/`, 'KMB routes'),
+      fetchKmbJson([
+        `${KMB_API}/route/`,
+        `${CORS_PROXY}${KMB_API}/route/`
+      ], 'KMB routes'),
       safeFetch(`${CTB}/route/CTB`, 'CTB routes')
     ]);
-    kmbRoutes = kData.data||[];
-    ctbRoutes = cData.data||[];
-    kmbNums = [...new Set(kmbRoutes.map(r=>r.route))].sort();
-    ctbNums = [...new Set(ctbRoutes.map(r=>r.route))].sort();
+    kmbRoutes = kData.data || [];
+    ctbRoutes = cData.data || [];
+    kmbNums = [...new Set(kmbRoutes.map(r => r.route))].sort();
+    ctbNums = [...new Set(ctbRoutes.map(r => r.route))].sort();
     populateRoutes();
-    log(lang==='en'?'Routes synced':'路線已同步','ok');
-    toast(lang==='en'?'Routes synced':'路線已同步','ok');
+    log(lang === 'en' ? 'Routes synced' : '路線已同步', 'ok');
+    toast(lang === 'en' ? 'Routes synced' : '路線已同步', 'ok');
+
+    if ($('routeA').value && getCo('A') === 'KMB') {
+      await syncKmbRoute(getRoute('A'), 'variantA', 'stopA');
+    } else if ($('routeA').value && getCo('A') === 'CTB') {
+      populateVariants(getRoute('A'), 'A');
+      await loadCtbStops('A');
+    }
+    if ($('routeB').value && getCo('B') === 'KMB') {
+      await syncKmbRoute(getRoute('B'), 'variantB', 'stopB');
+    } else if ($('routeB').value && getCo('B') === 'CTB') {
+      populateVariants(getRoute('B'), 'B');
+      await loadCtbStops('B');
+    }
   } catch (err) {
     console.error('syncRoutes failed:', err);
     const msg = err?.message || String(err);
@@ -1136,10 +1346,10 @@ async function loadCtbStops(side) {
   const route = getRoute(side);
   const sel = $(side === 'B' ? 'variantB' : 'variantA');
   const idx = sel.value;
-  if (idx === '') return;
+  if (idx === '' || idx === null) return;
   const v = variants(route, side)[Number(idx)];
   const stopSel = $(side === 'B' ? 'stopB' : 'stopA');
-  stopSel.innerHTML = '<option>Loading…</option>';
+  stopSel.innerHTML = '<option value="">Loading…</option>';
   stopSel.disabled = true;
   try {
     if (!ctbStops) {
@@ -1158,9 +1368,10 @@ async function loadCtbStops(side) {
       stopSel.appendChild(o);
     });
     stopSel.disabled = !stops.length;
+    if (stops.length) stopSel.selectedIndex = 0;
   } catch (err) {
     console.error('loadCtbStops failed:', err);
-    stopSel.innerHTML = '<option>— error —</option>';
+    stopSel.innerHTML = '<option value="">— error —</option>';
     stopSel.disabled = true;
     const msg = err?.message || String(err);
     log(msg, 'err');
@@ -1170,40 +1381,61 @@ async function loadCtbStops(side) {
 
 function updateCoUi(side) {
   const isKmb = getCo(side) === 'KMB';
-  const suf = side === 'B' ? 'b' : 'a';
-  document.querySelectorAll(`.kmb-only-${suf}`).forEach(el => el.classList.toggle('hidden', !isKmb));
-  document.querySelectorAll(`.ctb-only-${suf}`).forEach(el => el.classList.toggle('hidden', isKmb));
   $(side === 'B' ? 'btnSearchB' : 'btnSearchA').textContent = isKmb
     ? (lang === 'en' ? '🔍 Search Stops' : '🔍 搜尋車站')
     : (lang === 'en' ? '🔍 Load CTB Stops' : '🔍 載入城巴車站');
 }
 
-function populateVariants(route, side, bound='O', svc='1') {
-  const sel = $(side==='B'?'variantB':'variantA');
+function populateVariants(route, side, bound = 'O', svc = '1') {
+  const sel = $(side === 'B' ? 'variantB' : 'variantA');
+  if (getCo(side) === 'KMB') {
+    if (!route) { sel.innerHTML = '<option value="">—</option>'; sel.disabled = true; return; }
+    const preferred = bound === 'I' ? 'inbound' : 'outbound';
+    populateKmbVariantDropdown(route, sel.id, preferred);
+    return;
+  }
   const vars = variants(route, side);
-  sel.innerHTML='';
-  if (!vars.length) { sel.disabled=true; return; }
-  let def=0;
-  vars.forEach((v,i)=>{ const o=document.createElement('option'); o.value=String(i); o.textContent=`${v.orig_tc}→${v.dest_tc} (${v.service_type})`; sel.appendChild(o); if(v.bound===bound&&v.service_type===svc) def=i; });
-  sel.disabled=false; sel.value=String(def);
+  sel.innerHTML = '';
+  if (!vars.length) { sel.innerHTML = '<option value="">—</option>'; sel.disabled = true; return; }
+  let def = 0;
+  vars.forEach((v, i) => {
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = `${v.orig_tc}→${v.dest_tc} (${v.service_type})`;
+    sel.appendChild(o);
+    if (v.bound === bound && String(v.service_type) === String(svc)) def = i;
+  });
+  sel.disabled = false;
+  sel.value = String(def);
 }
 
 function snapshot(side) {
   const stopSel = $(side === 'B' ? 'stopB' : 'stopA');
   const opt = stopSel.selectedOptions[0];
   const stopName = opt?.dataset?.name || opt?.textContent?.trim() || '';
+  const db = loadDb();
+  const saved = db.profiles[uiProfile][side === 'B' ? 'busB' : 'busA'];
+  const liveDest = busLiveState[side]?.dest || saved?.dest || '';
+  const stopId = stopSel.value || saved?.stopId || saved?.stop || '';
   if (getCo(side) === 'KMB') {
     const dir = kmbDirectionForSide(side);
+    const varSel = $(side === 'B' ? 'variantB' : 'variantA');
     return {
-      co: 'KMB', route: getRoute(side), stopId: stopSel.value,
-      bound: dir === 'inbound' ? 'I' : 'O', svc: '1', stopName
+      co: 'KMB', route: getRoute(side), stopId,
+      bound: dir === 'inbound' ? 'I' : 'O', svc: '1',
+      stopName: stopName || saved?.stopName || '',
+      dest: liveDest,
+      variant: varSel.value
     };
   }
   const varSel = $(side === 'B' ? 'variantB' : 'variantA');
   const v = variants(getRoute(side), side)[Number(varSel.value)] || {};
+  const ctbDest = translateAndShortenName(v.dest_tc || v.dest_en || liveDest || '');
   return {
-    co: 'CTB', route: getRoute(side), stopId: stopSel.value,
-    bound: v.bound || (side === 'B' ? 'I' : 'O'), svc: v.service_type || '1', stopName
+    co: 'CTB', route: getRoute(side), stopId,
+    bound: v.bound || (side === 'B' ? 'I' : 'O'), svc: v.service_type || '1',
+    stopName: stopName || saved?.stopName || '',
+    dest: ctbDest
   };
 }
 
@@ -1222,24 +1454,53 @@ function initProfileTabs() {
     b.type='button';
     b.className='p-btn'+(i===uiProfile?' active':'');
     b.textContent=labels[i];
-    b.onclick=()=>{ saveProfileToDb(); uiProfile=i; loadProfileUi(); initProfileTabs(); };
+    b.onclick = async () => {
+      saveProfileToDb();
+      uiProfile = i;
+      await loadProfileUi();
+      initProfileTabs();
+    };
     tabs.appendChild(b);
   }
 }
 
-function loadProfileUi() {
+async function loadProfileUi() {
   const db = loadDb();
   const p = db.profiles[uiProfile];
   $('profileName').value = p.name||'';
   $('profileBadge').textContent = `P${uiProfile+1}`;
   $('coA').value = p.busA.co||'KMB'; $('coB').value = p.busB.co||'KMB';
   $('routeA').value = p.busA.route||''; $('routeB').value = p.busB.route||'';
-  $('dirA').value = (p.busA.bound === 'I') ? 'inbound' : 'outbound';
-  $('dirB').value = (p.busB.bound === 'I') ? 'inbound' : 'outbound';
   updateCoUi('A');
   updateCoUi('B');
-  clearEtaPreview('etaPreviewA', 'A');
-  clearEtaPreview('etaPreviewB', 'B');
+  busLiveState.A.dest = p.busA.dest || '';
+  busLiveState.B.dest = p.busB.dest || '';
+  clearEtaPreview('etaPreviewA', 'A', true);
+  clearEtaPreview('etaPreviewB', 'B', true);
+
+  if (p.busA.route && getCo('A') === 'KMB') {
+    await syncKmbRoute(p.busA.route, 'variantA', 'stopA', { silent: true }).catch(() => {});
+  } else if (p.busA.route && getCo('A') === 'CTB') {
+    populateVariants(p.busA.route, 'A', p.busA.bound, p.busA.svc);
+    await loadCtbStops('A');
+  } else {
+    $('variantA').innerHTML = '<option value="">—</option>';
+    $('variantA').disabled = true;
+    $('stopA').innerHTML = '<option value="">—</option>';
+    $('stopA').disabled = true;
+  }
+
+  if (p.busB.route && getCo('B') === 'KMB') {
+    await syncKmbRoute(p.busB.route, 'variantB', 'stopB', { silent: true }).catch(() => {});
+  } else if (p.busB.route && getCo('B') === 'CTB') {
+    populateVariants(p.busB.route, 'B', p.busB.bound, p.busB.svc);
+    await loadCtbStops('B');
+  } else {
+    $('variantB').innerHTML = '<option value="">—</option>';
+    $('variantB').disabled = true;
+    $('stopB').innerHTML = '<option value="">—</option>';
+    $('stopB').disabled = true;
+  }
 }
 
 function initStockSlots() {
@@ -1295,15 +1556,40 @@ function bindEvents() {
     const searchBtn = $(s==='B'?'btnSearchB':'btnSearchA');
     const stopEl = $(stopId);
     const varEl = $(s==='B'?'variantB':'variantA');
-    coEl.onchange = () => { updateCoUi(s); populateVariants(getRoute(s), s); clearEtaPreview(previewId, s); };
-    $(routeId).onchange = () => { populateVariants(getRoute(s), s); clearEtaPreview(previewId, s); };
-    varEl.onchange = () => loadCtbStops(s);
+    coEl.onchange = () => {
+      updateCoUi(s);
+      const route = getRoute(s);
+      clearEtaPreview(previewId, s);
+      if (getCo(s) === 'KMB' && route) syncKmbRoute(route, varEl.id, stopId).catch(e => log(e.message, 'err'));
+      else populateVariants(route, s);
+    };
+    $(routeId).onchange = async () => {
+      const route = getRoute(s);
+      clearEtaPreview(previewId, s);
+      if (!route) return;
+      if (getCo(s) === 'KMB') await syncKmbRoute(route, varEl.id, stopId);
+      else { populateVariants(route, s); await loadCtbStops(s); }
+    };
+    varEl.onchange = async () => {
+      const route = getRoute(s);
+      if (!route) return;
+      if (getCo(s) === 'KMB') await syncKmbRoute(route, varEl.id, stopId, { refreshVariants: false });
+      else await loadCtbStops(s);
+    };
     searchBtn.onclick = () => searchBusStops(routeId, stopId, previewId).catch(e => log(e.message, 'err'));
-    stopEl.onchange = () => {
+    stopEl.onchange = async () => {
       const route = getRoute(s);
       const stop = stopEl.value;
       if (!stop) { clearEtaPreview(previewId, s); return; }
-      fetchLiveEtaForSelect(stop, route, previewId, s).catch(e => log(e.message, 'err'));
+      const eta = await fetchLiveEtaForSelect(stop, route, previewId, s).catch(e => { log(e.message, 'err'); return -1; });
+      const opt = stopEl.selectedOptions[0];
+      const stopName = opt?.dataset?.name || opt?.textContent?.trim() || '';
+      if (route && stopName) {
+        const etaTxt = eta >= 0 ? `${eta} mins` : (lang === 'en' ? 'N/A' : '無');
+        log(lang === 'en'
+          ? `Loaded ${route} stop: ${stopName} (ETA: ${etaTxt})`
+          : `成功載入 ${route} 站點: ${stopName} (ETA: ${etaTxt})`, 'ok');
+      }
     };
   });
   $('btnSendBus').onclick = async () => {
@@ -1330,6 +1616,7 @@ function bindEvents() {
       await pushStock();
     } catch(e) { log(e.message,'err'); toast(e.message,'err'); }
   };
+  $('autoSync30').onchange = startAutoSync;
   $('weatherAuto').onchange = startAutoSync;
   $('stockAuto').onchange = startAutoSync;
   $('btnRefreshEta').onclick = () => pushBusEta().catch(e=>{log(e.message,'err');toast(e.message,'err');});
@@ -1343,7 +1630,8 @@ function bindEvents() {
 }
 
 async function boot() {
-  applyI18n(); bindEvents(); initProfileTabs(); initStockSlots(); loadProfileUi();
+  applyI18n(); bindEvents(); initProfileTabs(); initStockSlots();
+  $('autoSync30').checked = localStorage.getItem('m5-autosync-30') === '1';
   setCloud(false);
   ['A','B'].forEach(s => updateCoUi(s));
   const db = loadDb();
@@ -1353,8 +1641,7 @@ async function boot() {
   $('wifiSsid').value = db.config.wifiSsid||'';
   $('wifiPass').value = db.config.wifiPass||'';
   await syncRoutes().catch(()=>{});
-  if ($('routeA').value && getCo('A') === 'KMB') await searchBusStops('routeA', 'stopA', 'etaPreviewA').catch(()=>{});
-  if ($('routeB').value && getCo('B') === 'KMB') await searchBusStops('routeB', 'stopB', 'etaPreviewB').catch(()=>{});
+  await loadProfileUi();
   const id = parseUrlId();
   if (id && id.length>=8) {
     log(lang==='en'?`Auto-connect ${id}`:`自動連線 ${id}`,'info');
