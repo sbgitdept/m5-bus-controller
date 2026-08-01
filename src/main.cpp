@@ -432,6 +432,15 @@ static void applyStock(const char* json, size_t len) {
 // ---------------------------------------------------------------------------
 // MQTT Hub
 // ---------------------------------------------------------------------------
+static void publishRefreshRequest(const char* type) {
+    g_jsonDoc.clear();
+    g_jsonDoc["type"] = type;
+    g_jsonDoc["device"] = g_deviceId;
+    g_jsonDoc["ts"] = (uint32_t)time(nullptr);
+    size_t n = serializeJson(g_jsonDoc, g_mqttPayload, sizeof(g_mqttPayload));
+    g_mqtt.publish(topic("request").c_str(), (const uint8_t*)g_mqttPayload, n, false);
+}
+
 static void publishState() {
     g_jsonDoc.clear();
     g_jsonDoc["live"] = true;
@@ -531,6 +540,7 @@ public:
     virtual void render(M5Canvas& c, int w, int h) = 0;
     virtual void onBtnAPress() {}
     virtual void onBtnALongPress() {}
+    virtual void onBtnBPress() {}
     virtual void onExit() {}
     virtual bool forcePortrait() const { return false; }
     virtual bool forceLandscape() const { return false; }
@@ -581,10 +591,11 @@ private:
         int ry = y + 28;
         for (int i = 0; i < ETA_SLOTS; ++i) {
             if (col.slots[i].valid) {
-                c.setTextSize(2);
+                c.setFont(&fonts::Font4);
                 c.setTextColor(C_CYAN);
                 c.setCursor(x + 4, ry);
                 c.printf("%d'", col.slots[i].minutes);
+                c.setFont(&fonts::Font0);
                 c.setTextSize(1);
                 c.setTextColor(C_FG);
                 c.setCursor(x + 4, ry + 18);
@@ -662,7 +673,7 @@ public:
         saveNvs();
     }
 
-    void onBtnALongPress() override { /* refresh via MQTT from web */ }
+    void onBtnALongPress() override { publishRefreshRequest("stock"); }
 
     void render(M5Canvas& c, int w, int h) override {
         c.fillSprite(C_BG);
@@ -724,7 +735,7 @@ public:
 
     void onBtnAPress() override { g_weatherForecastView = !g_weatherForecastView; }
 
-    void onBtnALongPress() override { /* HKO refresh via MQTT */ }
+    void onBtnALongPress() override { publishRefreshRequest("weather"); }
 
     void render(M5Canvas& c, int w, int h) override {
         c.fillSprite(C_BG);
@@ -813,7 +824,13 @@ static void adjustCarousel() {
     switch (g_carouselIdx) {
         case 0: g_cfg.appMode = (AppMode)(((int)g_cfg.appMode + 1) % (int)AppMode::Count); break;
         case 1: g_activeProfile = (g_activeProfile + 1) % PROFILE_COUNT; break;
-        case 2: break;
+        case 2: {
+            if (g_cfg.radar.ssid[0] == '\0' && WiFi.SSID().length())
+                strlcpy(g_cfg.radar.ssid, WiFi.SSID().c_str(), sizeof(g_cfg.radar.ssid));
+            else
+                g_cfg.radar.ssid[0] = '\0';
+            break;
+        }
         case 3: g_cfg.bright = (g_cfg.bright + 1) % 4; M5.Display.setBrightness(brightVal()); break;
         case 4: g_cfg.timeout = (g_cfg.timeout + 1) % 4; break;
         case 5: g_cfg.english = !g_cfg.english; break;
@@ -915,7 +932,7 @@ public:
             if (now - lastB_ > MULTI_CLICK_MS) cntB_ = 0;
             ++cntB_;
             lastB_ = now;
-            if (cntB_ < MULTI_CLICK_TARGET) onSingleB();
+            if (cntB_ < MULTI_CLICK_TARGET) onSingleB(mod);
         }
 
         if (cntA_ && now - lastA_ > MULTI_CLICK_MS) {
@@ -941,12 +958,18 @@ private:
         mod->onBtnALongPress();
     }
 
-    void onSingleB() {
+    void onSingleB(AppModule* mod) {
         if (g_ui == UiScreen::QrCode) { g_ui = UiScreen::Module; return; }
         if (g_ui == UiScreen::Carousel) {
             g_carouselIdx = (g_carouselIdx + 1) % CAROUSEL_CARDS;
             return;
         }
+        if (g_cfg.appMode == AppMode::Rssi) {
+            g_cfg.appMode = AppMode::Bus;
+            saveNvs();
+            return;
+        }
+        if (mod) mod->onBtnBPress();
         g_ui = UiScreen::Carousel;
         g_carouselIdx = 0;
         setRotation(0);

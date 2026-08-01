@@ -332,11 +332,19 @@ function connect() {
   mqttClient = mqtt.connect(MQTT_WS, {clientId:`web-${id}-${Math.random().toString(36).slice(2,8)}`,clean:true,reconnectPeriod:4000});
   mqttClient.on('connect', () => {
     setCloud(true,'HiveMQ');
-    mqttClient.subscribe([topic('state'), topic('wifi_scan')], {qos:0});
+    mqttClient.subscribe([topic('state'), topic('wifi_scan'), topic('request')], {qos:0});
     log('MQTT connected','ok'); toast(t('connected'),'ok');
     startAutoSync();
   });
   mqttClient.on('message', (tpc, buf) => {
+    if (tpc.endsWith('/request')) {
+      try {
+        const msg = JSON.parse(buf.toString());
+        if (msg.type === 'weather') pushWeather().catch(e => log(e.message, 'err'));
+        if (msg.type === 'stock') pushStock().catch(e => log(e.message, 'err'));
+      } catch {}
+      return;
+    }
     if (tpc.endsWith('/wifi_scan')) {
       try {
         const msg = JSON.parse(buf.toString());
@@ -589,7 +597,12 @@ function parseUrlId() {
 }
 
 function bindEvents() {
-  $('langSelect').onchange = () => { lang=$('langSelect').value; localStorage.setItem('m5-lang',lang); applyI18n(); };
+  $('langSelect').onchange = () => {
+    lang = $('langSelect').value;
+    localStorage.setItem('m5-lang', lang);
+    $('m5lang').value = lang === 'en' ? '1' : '0';
+    applyI18n();
+  };
   document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
   $('btnConnect').onclick = () => { try { connected?disconnect():connect(); } catch(e){log(e.message,'err');toast(e.message,'err');} };
   $('btnSyncRoutes').onclick = () => syncRoutes().catch(e=>log(e.message,'err'));
