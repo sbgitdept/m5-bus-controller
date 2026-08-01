@@ -1,166 +1,298 @@
 <!DOCTYPE html>
-<html lang="zh-Hant" class="dark">
+<html lang="zh-HK">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f172a" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>M5 Bus Controller v6</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>M5 Smart Keychain CRM Console v6.0</title>
+  <link rel="manifest" href="manifest.webmanifest">
   <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
-  <script>tailwind.config={darkMode:'class',theme:{extend:{colors:{surface:{DEFAULT:'#0f172a',card:'#1e293b',border:'#334155'}}}}};</script>
   <style>
-    html{color-scheme:dark}body{-webkit-tap-highlight-color:transparent}
-    .status-dot{box-shadow:0 0 8px currentColor}
-    #toast{transition:opacity .3s,transform .3s}
-    #toast.hidden{opacity:0;transform:translateY(12px);pointer-events:none}
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #151d30;
+      --card-border: #23304d;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --accent: #06b6d4;
+      --text-main: #f8fafc;
+      --text-sub: #94a3b8;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+    body { background-color: var(--bg); color: var(--text-main); padding: 16px; font-size: 14px; line-height: 1.5; padding-bottom: 80px; }
+    .hidden { display: none !important; }
+
+    .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 4px; margin-bottom: 16px; }
+    .header h1 { font-size: 20px; font-weight: 700; background: linear-gradient(135deg, #60a5fa, #a7f3d0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .header-sub { font-size: 11px; color: var(--text-sub); margin-top: 2px; }
+    .header-badges { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+    .lang-pill { background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-sub); border-radius: 20px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .lang-pill:active { scale: 0.95; }
+
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
+    .card-title { font-size: 16px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; }
+
+    .status-badge { font-size: 11px; padding: 4px 10px; border-radius: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+    .status-online { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .status-offline { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+    .status-live { background: rgba(6, 182, 212, 0.15); color: var(--accent); border: 1px solid rgba(6, 182, 212, 0.3); }
+    .status-battery { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+
+    label { display: block; font-size: 12px; font-weight: 600; color: var(--text-sub); margin-top: 10px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    input[type="text"], input[type="number"], input[type="password"], select {
+      width: 100%; padding: 12px 14px; background: #0b0f19; border: 1px solid var(--card-border);
+      border-radius: 10px; color: #fff; font-size: 14px; outline: none; transition: border-color 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--primary); }
+    input:disabled, select:disabled { opacity: 0.5; }
+
+    .nav-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
+    .nav-tabs::-webkit-scrollbar { display: none; }
+    .nav-btn {
+      background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-sub);
+      padding: 10px 18px; border-radius: 25px; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; transition: all 0.2s;
+    }
+    .nav-btn.active { background: linear-gradient(135deg, var(--primary), var(--primary-hover)); color: #fff; border-color: var(--primary); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+
+    .btn {
+      width: 100%; background: linear-gradient(135deg, var(--primary), var(--primary-hover)); color: white; border: none; padding: 14px;
+      border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 14px; transition: all 0.2s;
+      display: flex; justify-content: center; align-items: center; gap: 8px; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn:active:not(:disabled) { scale: 0.98; opacity: 0.9; }
+    .btn-inline { width: auto; margin-top: 0; white-space: nowrap; padding: 12px 16px; }
+    .btn-secondary { background: #23304d; box-shadow: none; }
+    .btn-accent { background: linear-gradient(135deg, #0891b2, #06b6d4); box-shadow: 0 4px 14px rgba(6, 182, 212, 0.3); }
+    .btn-success { background: linear-gradient(135deg, #059669, #10b981); box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3); }
+    .btn-danger { background: var(--danger); box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3); }
+    .btn-sm { padding: 8px 12px; font-size: 12px; margin-top: 8px; width: auto; }
+
+    .profile-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px; }
+    .p-btn { text-align: center; padding: 8px 4px; background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; font-size: 12px; font-weight: 700; color: var(--text-sub); cursor: pointer; }
+    .p-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 480px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .bus-col { background: #0b0f19; border: 1px solid var(--card-border); border-radius: 10px; padding: 12px; }
+    .bus-col-title { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+
+    .stock-card { background: #0b0f19; border: 1px solid var(--card-border); padding: 10px 12px; border-radius: 8px; display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .stock-card input { margin: 0; padding: 8px 10px; font-size: 13px; }
+
+    .hint { font-size: 12px; color: var(--text-sub); margin-bottom: 12px; line-height: 1.6; }
+    .live-box { background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.25); color: #67e8f9; padding: 8px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 10px; }
+    .preview { margin-top: 10px; max-height: 160px; overflow: auto; background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 10px; font-size: 11px; color: var(--text-sub); white-space: pre-wrap; word-break: break-all; }
+    .check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--text-sub); }
+    .check-row input { width: auto; }
+    .action-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+    #log { max-height: 160px; overflow-y: auto; font-size: 12px; }
+    #log p { margin-bottom: 4px; }
+    .log-info { color: var(--text-sub); }
+    .log-ok { color: var(--success); }
+    .log-err { color: var(--danger); }
+    .log-warn { color: var(--warning); }
+
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px);
+      background: rgba(15, 23, 42, 0.95); border: 1px solid var(--card-border); color: #fff;
+      padding: 10px 20px; border-radius: 25px; font-size: 13px; font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5); opacity: 0; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      backdrop-filter: blur(8px); z-index: 999; pointer-events: none;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+    #toast.ok { border-color: rgba(16, 185, 129, 0.5); color: #6ee7b7; }
+    #toast.err { border-color: rgba(239, 68, 68, 0.5); color: #fca5a5; }
   </style>
 </head>
-<body class="bg-surface text-slate-100 min-h-screen pb-20">
-  <div id="toast" class="fixed bottom-20 left-1/2 z-50 hidden -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm shadow-lg border border-slate-600"></div>
+<body>
 
-  <header class="sticky top-0 z-30 border-b border-surface-border bg-surface/95 backdrop-blur px-4 py-3">
-    <div class="flex items-center justify-between gap-2">
-      <div>
-        <h1 class="text-lg font-bold" data-i18n="title">M5 Bus Controller</h1>
-        <p class="text-xs text-slate-400" data-i18n="subtitle">v6.0 CRM · Bus · RSSI · Stock · Weather</p>
+  <div class="header">
+    <div>
+      <h1>📱 <span data-i18n="title">M5 匙扣 CRM 控制台</span></h1>
+      <p class="header-sub" data-i18n="subtitle">v6.0 · 巴士 · RSSI · 股票 · 天氣</p>
+    </div>
+    <div class="header-badges">
+      <button class="lang-pill" id="langBtn" type="button">繁體中文 / EN</button>
+      <span id="liveBadge" class="status-badge status-offline"><span id="liveText">Offline</span></span>
+      <span id="batteryBadge" class="status-badge status-battery hidden"><span id="batteryPct">--%</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">📡 <span data-i18n="mqttTitle">MQTT 裝置連線</span></div>
+      <span id="connBadge" class="status-badge status-offline" data-i18n="disconnected">未連線</span>
+    </div>
+    <label data-i18n="deviceId">M5 裝置 ID (Device ID)</label>
+    <div style="display:flex; gap:8px; align-items:stretch;">
+      <input type="text" id="deviceId" maxlength="12" placeholder="AC276ED279C4" style="font-family:monospace; text-transform:uppercase;">
+      <button class="btn btn-inline" id="btnConnect" type="button" data-i18n="connect">連線</button>
+    </div>
+    <p class="hint" style="margin-top:10px;">Topic: m5bus_&lt;ID&gt;/config · state · weather · stock · request</p>
+  </div>
+
+  <div class="nav-tabs">
+    <button class="nav-btn active tab" data-tab="bus" type="button">🚌 <span data-i18n="tabBus">巴士 ETA</span></button>
+    <button class="nav-btn tab" data-tab="rssi" type="button">📡 <span data-i18n="tabRssi">RSSI 雷達</span></button>
+    <button class="nav-btn tab" data-tab="stock" type="button">📈 <span data-i18n="tabStock">股票報價</span></button>
+    <button class="nav-btn tab" data-tab="weather" type="button">🌤️ <span data-i18n="tabWeather">天氣預報</span></button>
+    <button class="nav-btn tab" data-tab="settings" type="button">⚙️ <span data-i18n="tabSettings">系統設定</span></button>
+  </div>
+
+  <!-- BUS -->
+  <div id="panel-bus" class="panel">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">🚌 <span data-i18n="busProfiles">雙欄巴士 Profile 設定</span></div>
+        <span id="profileBadge" class="status-badge status-live">P1</span>
       </div>
-      <div class="flex items-center gap-2">
-        <select id="langSelect" class="rounded border border-surface-border bg-slate-900 px-2 py-1 text-xs">
-          <option value="zh">繁體中文</option><option value="en">English</option>
-        </select>
-        <span id="liveBadge" class="inline-flex items-center gap-1 rounded-full border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-500">
-          <span id="liveDot" class="h-2 w-2 rounded-full bg-slate-600"></span><span id="liveText">Offline</span>
-        </span>
-        <span id="batteryBadge" class="hidden items-center gap-1 rounded-full border border-slate-600 bg-slate-900 px-2 py-1 text-xs">
-          <span id="batteryIcon">🔋</span><span id="batteryPct">--%</span>
-        </span>
+      <div class="profile-grid" id="profileTabs"></div>
+      <label data-i18n="profileName">Profile 顯示名稱</label>
+      <input type="text" id="profileName" data-i18n-placeholder="profileName" placeholder="返工">
+      <div class="grid-2" style="margin-top:4px;">
+        <div class="bus-col">
+          <div class="bus-col-title" data-i18n="colA">左欄 A</div>
+          <label>Operator</label>
+          <select id="coA"><option value="KMB">KMB</option><option value="CTB">CTB</option></select>
+          <label>Route</label>
+          <input id="routeA" list="routesA" placeholder="76K">
+          <datalist id="routesA"></datalist>
+          <label>Variant</label>
+          <select id="variantA" disabled><option>—</option></select>
+          <label>Stop</label>
+          <select id="stopA" disabled><option>—</option></select>
+        </div>
+        <div class="bus-col">
+          <div class="bus-col-title" data-i18n="colB">右欄 B</div>
+          <label>Operator</label>
+          <select id="coB"><option value="KMB">KMB</option><option value="CTB">CTB</option></select>
+          <label>Route</label>
+          <input id="routeB" list="routesB" placeholder="76K">
+          <datalist id="routesB"></datalist>
+          <label>Variant</label>
+          <select id="variantB" disabled><option>—</option></select>
+          <label>Stop</label>
+          <select id="stopB" disabled><option>—</option></select>
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="btnSyncRoutes" type="button" data-i18n="syncRoutes">🔄 同步路線</button>
+      <button class="btn" id="btnSendBus" type="button" data-i18n="sendBus">📡 發送 Profile 設定至 M5</button>
+    </div>
+  </div>
+
+  <!-- RSSI -->
+  <div id="panel-rssi" class="panel hidden">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📡 <span data-i18n="rssiTitle">WiFi RSSI 雷達 Target</span></div>
+      </div>
+      <div id="rssiLive" class="live-box hidden"></div>
+      <label>App Mode</label>
+      <select id="appMode">
+        <option value="bus">Bus ETA</option>
+        <option value="rssi">RSSI Radar</option>
+        <option value="stock">Stock</option>
+        <option value="weather">Weather</option>
+      </select>
+      <label data-i18n="lblTargetSsid">Target Wi-Fi SSID</label>
+      <input type="text" id="radarSsid" placeholder="DH">
+      <label data-i18n="lblTargetMac">Target MAC Address (選填)</label>
+      <input type="text" id="radarMac" placeholder="AA:BB:CC:DD:EE:FF" style="font-family:monospace;">
+      <button class="btn btn-secondary" id="btnScanWifi" type="button">📡 M5 WiFi Scan</button>
+      <label>Scan Results</label>
+      <select id="scanResults" disabled><option>— scan —</option></select>
+      <button class="btn btn-accent" id="btnSendRssi" type="button" data-i18n="sendRssi">📡 發送 RSSI 設定至 M5</button>
+    </div>
+  </div>
+
+  <!-- STOCK -->
+  <div id="panel-stock" class="panel hidden">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📈 <span data-i18n="stockTitle">港股 / 美股關注清單</span></div>
+      </div>
+      <div id="stockSlots"></div>
+      <button class="btn btn-success" id="btnFetchStock" type="button" data-i18n="fetchStock">📈 抓取 Yahoo 並推送至 M5</button>
+      <label class="check-row"><input type="checkbox" id="stockAuto"> <span data-i18n="autoStock">自動 60 秒</span></label>
+      <div id="stockPreview" class="preview">—</div>
+    </div>
+  </div>
+
+  <!-- WEATHER -->
+  <div id="panel-weather" class="panel hidden">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">🌤️ <span data-i18n="weatherTitle">香港天文台 HKO API 同步</span></div>
+      </div>
+      <p class="hint" data-i18n="weatherDesc">由瀏覽器對接 HKO Open Data，清洗預報與警告後推送至 m5bus_&lt;ID&gt;/weather（retain: false）。</p>
+      <button class="btn btn-accent" id="btnFetchWeather" type="button" data-i18n="fetchWeather">🌦️ 立即拉取 HKO 天氣並推送到 M5</button>
+      <label class="check-row"><input type="checkbox" id="weatherAuto" checked> <span data-i18n="autoWeather">自動 30 秒</span></label>
+      <div id="weatherPreview" class="preview">—</div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="panel-settings" class="panel hidden">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">⚙️ <span data-i18n="settingsTitle">M5 匙扣偏好設定</span></div>
+      </div>
+      <div class="grid-2">
+        <div>
+          <label data-i18n="bright">螢幕亮度 Brightness</label>
+          <select id="bright">
+            <option value="0">25% (暗)</option>
+            <option value="1" selected>50%</option>
+            <option value="2">75% (標準)</option>
+            <option value="3">100% (最亮)</option>
+          </select>
+        </div>
+        <div>
+          <label data-i18n="timeout">自動熄屏 Auto-Sleep</label>
+          <select id="timeout">
+            <option value="0">15 秒</option>
+            <option value="1" selected>30 秒</option>
+            <option value="2">60 秒</option>
+            <option value="3" data-i18n="never">永不熄屏</option>
+          </select>
+        </div>
+      </div>
+      <label data-i18n="lang">M5 顯示語言</label>
+      <select id="m5lang">
+        <option value="0">繁體中文</option>
+        <option value="1">English</option>
+      </select>
+      <label data-i18n="wifiSsid">WiFi SSID</label>
+      <input type="text" id="wifiSsid" autocomplete="username">
+      <label data-i18n="wifiPass">WiFi 密碼</label>
+      <input type="password" id="wifiPass" autocomplete="current-password">
+      <button class="btn btn-success" id="btnSendWifi" type="button" data-i18n="sendWifi">📶 發送 WiFi 至 M5</button>
+      <div class="action-row">
+        <button class="btn btn-secondary btn-sm" id="btnRefreshEta" type="button" data-i18n="refreshEta">⟳ 刷新 ETA</button>
+        <button class="btn btn-secondary btn-sm" id="btnReboot" type="button" data-i18n="reboot">↻ 重啟 M5</button>
+        <button class="btn btn-secondary btn-sm" id="btnSendSettings" type="button" data-i18n="sendSettings">💾 僅發送設定</button>
       </div>
     </div>
-  </header>
+  </div>
 
-  <main class="mx-auto max-w-lg space-y-4 p-4">
-    <section class="rounded-xl border border-surface-border bg-surface-card p-4">
-      <h2 class="mb-2 text-sm font-semibold text-amber-400" data-i18n="mqttTitle">MQTT 雲端配對</h2>
-      <div class="mb-2 flex items-center gap-2 text-xs">
-        <span id="cloudDot" class="status-dot h-2.5 w-2.5 rounded-full bg-slate-600"></span>
-        <span id="cloudLabel" class="text-slate-500" data-i18n="disconnected">未連線</span>
-      </div>
-      <label class="text-xs text-slate-400" data-i18n="deviceId">Device ID</label>
-      <input id="deviceId" class="mb-2 w-full rounded-lg border border-surface-border bg-slate-900 px-3 py-2 font-mono text-sm uppercase" maxlength="12" placeholder="AABBCCDDEEFF" />
-      <button id="btnConnect" class="w-full rounded-lg bg-amber-600 py-2.5 text-sm font-semibold" data-i18n="connect">☁ 連線 MQTT</button>
-      <p class="mt-2 text-xs text-slate-500">Topic: m5bus_&lt;ID&gt;/config · state · weather · stock</p>
-    </section>
-
-    <nav class="flex gap-1 overflow-x-auto rounded-xl border border-surface-border bg-surface-card p-1 text-xs">
-      <button class="tab flex-1 rounded-lg bg-amber-600 py-2 font-semibold" data-tab="bus" data-i18n="tabBus">🚌 Bus</button>
-      <button class="tab flex-1 rounded-lg py-2 text-slate-400" data-tab="rssi" data-i18n="tabRssi">📡 RSSI</button>
-      <button class="tab flex-1 rounded-lg py-2 text-slate-400" data-tab="stock" data-i18n="tabStock">📈 Stock</button>
-      <button class="tab flex-1 rounded-lg py-2 text-slate-400" data-tab="weather" data-i18n="tabWeather">🌤 Weather</button>
-      <button class="tab flex-1 rounded-lg py-2 text-slate-400" data-tab="settings" data-i18n="tabSettings">⚙ Settings</button>
-    </nav>
-
-    <!-- BUS -->
-    <div id="panel-bus" class="panel space-y-4">
-      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
-        <div class="mb-2 flex justify-between"><h3 class="text-sm font-semibold" data-i18n="busProfiles">4-Profile Bus ETA</h3><span id="profileBadge" class="text-xs text-amber-300">P1</span></div>
-        <div class="mb-2 flex gap-1" id="profileTabs"></div>
-        <input id="profileName" class="mb-2 w-full rounded border border-surface-border bg-slate-900 px-2 py-1 text-sm" data-i18n-placeholder="profileName" placeholder="Profile 名稱" />
-        <div class="space-y-3">
-          <div class="rounded border border-slate-700 p-2">
-            <p class="mb-1 text-xs text-cyan-300" data-i18n="colA">左欄 A</p>
-            <select id="coA" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm"><option value="KMB">KMB</option><option value="CTB">CTB</option></select>
-            <input id="routeA" list="routesA" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm" placeholder="Route" />
-            <datalist id="routesA"></datalist>
-            <select id="variantA" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm" disabled><option>—</option></select>
-            <select id="stopA" class="w-full rounded bg-slate-900 px-2 py-1 text-sm" disabled><option>—</option></select>
-          </div>
-          <div class="rounded border border-slate-700 p-2">
-            <p class="mb-1 text-xs text-cyan-300" data-i18n="colB">右欄 B</p>
-            <select id="coB" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm"><option value="KMB">KMB</option><option value="CTB">CTB</option></select>
-            <input id="routeB" list="routesB" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm" placeholder="Route" />
-            <datalist id="routesB"></datalist>
-            <select id="variantB" class="mb-1 w-full rounded bg-slate-900 px-2 py-1 text-sm" disabled><option>—</option></select>
-            <select id="stopB" class="w-full rounded bg-slate-900 px-2 py-1 text-sm" disabled><option>—</option></select>
-          </div>
-        </div>
-        <button id="btnSyncRoutes" class="mt-2 text-xs text-amber-400" data-i18n="syncRoutes">🔄 同步路線</button>
-        <button id="btnSendBus" class="mt-3 w-full rounded-lg bg-amber-600 py-2 text-sm font-semibold" data-i18n="sendBus">📡 發送 Bus 設定</button>
-      </section>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">📋 <span data-i18n="logTitle">同步記錄</span></div>
     </div>
+    <div id="log"><p class="log-info" data-i18n="logWait">— 等待操作 —</p></div>
+  </div>
 
-    <!-- RSSI -->
-    <div id="panel-rssi" class="panel hidden space-y-4">
-      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
-        <h3 class="mb-2 text-sm font-semibold" data-i18n="rssiTitle">RSSI Monitor</h3>
-        <p id="rssiLive" class="mb-2 hidden rounded bg-cyan-950/50 px-2 py-1 text-xs text-cyan-300"></p>
-        <select id="appMode" class="mb-2 w-full rounded bg-slate-900 px-2 py-2 text-sm">
-          <option value="bus">Bus ETA</option><option value="rssi">RSSI Radar</option>
-          <option value="stock">Stock</option><option value="weather">Weather</option>
-        </select>
-        <input id="radarSsid" class="mb-2 w-full rounded bg-slate-900 px-2 py-2 text-sm" placeholder="Scan SSID (blank=current)" />
-        <input id="radarMac" class="mb-2 w-full rounded bg-slate-900 px-2 py-2 font-mono text-sm" placeholder="BSSID AA:BB:CC:DD:EE:FF" />
-        <button id="btnScanWifi" class="mb-2 w-full rounded bg-slate-800 py-2 text-xs">📡 M5 WiFi Scan</button>
-        <select id="scanResults" class="mb-2 w-full rounded bg-slate-900 px-2 py-2 text-sm" disabled><option>— scan —</option></select>
-        <button id="btnSendRssi" class="w-full rounded-lg bg-cyan-700 py-2 text-sm font-semibold" data-i18n="sendRssi">📡 發送 RSSI 設定</button>
-      </section>
-    </div>
-
-    <!-- STOCK -->
-    <div id="panel-stock" class="panel hidden space-y-4">
-      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
-        <h3 class="mb-2 text-sm font-semibold" data-i18n="stockTitle">Stock Watchlist ETL</h3>
-        <div id="stockSlots" class="space-y-2"></div>
-        <button id="btnFetchStock" class="mt-2 w-full rounded-lg bg-emerald-700 py-2 text-sm font-semibold" data-i18n="fetchStock">📈 抓取並推送</button>
-        <label class="mt-2 flex items-center gap-2 text-xs"><input id="stockAuto" type="checkbox" /> <span data-i18n="autoStock">Auto 60s</span></label>
-        <pre id="stockPreview" class="mt-2 max-h-32 overflow-auto rounded bg-slate-900 p-2 text-xs text-slate-400">—</pre>
-      </section>
-    </div>
-
-    <!-- WEATHER -->
-    <div id="panel-weather" class="panel hidden space-y-4">
-      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
-        <h3 class="mb-2 text-sm font-semibold" data-i18n="weatherTitle">HKO Weather ETL</h3>
-        <p class="mb-2 text-xs text-slate-400" data-i18n="weatherDesc">rhrread + fnd → m5bus_&lt;ID&gt;/weather (retain: false)</p>
-        <button id="btnFetchWeather" class="w-full rounded-lg bg-sky-700 py-2 text-sm font-semibold" data-i18n="fetchWeather">🌤 抓取 HKO 並推送</button>
-        <label class="mt-2 flex items-center gap-2 text-xs"><input id="weatherAuto" type="checkbox" checked /> <span data-i18n="autoWeather">Auto 30s</span></label>
-        <pre id="weatherPreview" class="mt-2 max-h-40 overflow-auto rounded bg-slate-900 p-2 text-xs text-slate-400">—</pre>
-      </section>
-    </div>
-
-    <!-- SETTINGS -->
-    <div id="panel-settings" class="panel hidden space-y-4">
-      <section class="rounded-xl border border-surface-border bg-surface-card p-4">
-        <h3 class="mb-2 text-sm font-semibold" data-i18n="settingsTitle">裝置設定</h3>
-        <div class="grid grid-cols-2 gap-2 text-sm">
-          <div><label class="text-xs text-slate-400" data-i18n="bright">亮度</label>
-            <select id="bright" class="w-full rounded bg-slate-900 px-2 py-1"><option value="0">25%</option><option value="1" selected>50%</option><option value="2">75%</option><option value="3">100%</option></select></div>
-          <div><label class="text-xs text-slate-400" data-i18n="timeout">逾時</label>
-            <select id="timeout" class="w-full rounded bg-slate-900 px-2 py-1"><option value="0">15s</option><option value="1" selected>30s</option><option value="2">60s</option><option value="3" data-i18n="never">永不</option></select></div>
-          <div><label class="text-xs text-slate-400" data-i18n="lang">語言</label>
-            <select id="m5lang" class="w-full rounded bg-slate-900 px-2 py-1"><option value="0">中文</option><option value="1">English</option></select></div>
-        </div>
-        <div class="mt-3 space-y-2">
-          <label class="text-xs text-slate-400" data-i18n="wifiSsid">WiFi SSID</label>
-          <input id="wifiSsid" class="w-full rounded bg-slate-900 px-2 py-2 text-sm" />
-          <label class="text-xs text-slate-400" data-i18n="wifiPass">WiFi 密碼</label>
-          <input id="wifiPass" type="password" class="w-full rounded bg-slate-900 px-2 py-2 text-sm" />
-          <button id="btnSendWifi" class="w-full rounded bg-emerald-700 py-2 text-sm" data-i18n="sendWifi">📶 發送 WiFi</button>
-        </div>
-        <div class="mt-3 flex flex-wrap gap-2">
-          <button id="btnRefreshEta" class="rounded bg-slate-800 px-3 py-2 text-xs" data-i18n="refreshEta">⟳ 刷新 ETA</button>
-          <button id="btnReboot" class="rounded bg-slate-800 px-3 py-2 text-xs" data-i18n="reboot">↻ 重啟</button>
-        </div>
-        <button id="btnSendSettings" class="mt-3 w-full rounded border border-amber-600/50 py-2 text-sm" data-i18n="sendSettings">僅發送設定</button>
-      </section>
-    </div>
-
-    <section class="rounded-xl border border-surface-border bg-surface-card p-4">
-      <h3 class="mb-2 text-sm font-semibold" data-i18n="logTitle">同步記錄</h3>
-      <div id="log" class="max-h-40 space-y-1 overflow-y-auto text-xs"><p class="text-slate-500" data-i18n="logWait">— 等待操作 —</p></div>
-    </section>
-  </main>
+  <div id="toast"></div>
 
 <script>
 (function(){
@@ -168,64 +300,72 @@
 
 const I18N = {
   zh: {
-    title:'M5 Bus Controller', subtitle:'v6.0 CRM · 巴士 · RSSI · 股票 · 天氣',
-    mqttTitle:'MQTT 雲端配對', disconnected:'未連線', connected:'已連線', deviceId:'Device ID', connect:'☁ 連線 MQTT', disconnect:'🔴 中斷',
-    tabBus:'🚌 Bus', tabRssi:'📡 RSSI', tabStock:'📈 Stock', tabWeather:'🌤 Weather', tabSettings:'⚙ 設定',
-    busProfiles:'4-Profile Bus ETA', profileName:'Profile 名稱', colA:'左欄 A', colB:'右欄 B',
-    syncRoutes:'🔄 同步路線', sendBus:'📡 發送 Bus 設定',
-    rssiTitle:'RSSI Monitor', sendRssi:'📡 發送 RSSI 設定',
-    stockTitle:'Stock Watchlist ETL', fetchStock:'📈 抓取並推送', autoStock:'自動 60 秒',
-    weatherTitle:'HKO Weather ETL', weatherDesc:'rhrread + fnd → weather (retain: false)', fetchWeather:'🌤 抓取 HKO 並推送', autoWeather:'自動 30 秒',
-    settingsTitle:'裝置設定', bright:'亮度', timeout:'逾時', never:'永不', lang:'語言',
-    wifiSsid:'WiFi SSID', wifiPass:'WiFi 密碼', sendWifi:'📶 發送 WiFi',
-    refreshEta:'⟳ 刷新 ETA', reboot:'↻ 重啟', sendSettings:'僅發送設定',
+    title:'M5 匙扣 CRM 控制台', subtitle:'v6.0 · 巴士 · RSSI · 股票 · 天氣',
+    mqttTitle:'MQTT 裝置連線', disconnected:'未連線', connected:'已連線', deviceId:'M5 裝置 ID (Device ID)',
+    connect:'連線', disconnect:'中斷',
+    tabBus:'巴士 ETA', tabRssi:'RSSI 雷達', tabStock:'股票報價', tabWeather:'天氣預報', tabSettings:'系統設定',
+    busProfiles:'雙欄巴士 Profile 設定', profileName:'Profile 顯示名稱', colA:'左欄 A', colB:'右欄 B',
+    syncRoutes:'🔄 同步路線', sendBus:'📡 發送 Profile 設定至 M5',
+    rssiTitle:'WiFi RSSI 雷達 Target', lblTargetSsid:'Target Wi-Fi SSID', lblTargetMac:'Target MAC Address (選填)',
+    sendRssi:'📡 發送 RSSI 設定至 M5',
+    stockTitle:'港股 / 美股關注清單', fetchStock:'📈 抓取 Yahoo 並推送至 M5', autoStock:'自動 60 秒',
+    weatherTitle:'香港天文台 HKO API 同步',
+    weatherDesc:'由瀏覽器對接 HKO Open Data，清洗預報與警告後推送至 m5bus_<ID>/weather（retain: false）。',
+    fetchWeather:'🌦️ 立即拉取 HKO 天氣並推送到 M5', autoWeather:'自動 30 秒',
+    settingsTitle:'M5 匙扣偏好設定', bright:'螢幕亮度 Brightness', timeout:'自動熄屏 Auto-Sleep', never:'永不熄屏', lang:'M5 顯示語言',
+    wifiSsid:'WiFi SSID', wifiPass:'WiFi 密碼', sendWifi:'📶 發送 WiFi 至 M5',
+    refreshEta:'⟳ 刷新 ETA', reboot:'↻ 重啟 M5', sendSettings:'💾 僅發送設定',
     logTitle:'同步記錄', logWait:'— 等待操作 —'
   },
   en: {
-    title:'M5 Bus Controller', subtitle:'v6.0 CRM · Bus · RSSI · Stock · Weather',
-    mqttTitle:'MQTT Cloud Pairing', disconnected:'Disconnected', connected:'Connected', deviceId:'Device ID', connect:'☁ Connect MQTT', disconnect:'🔴 Disconnect',
-    tabBus:'🚌 Bus', tabRssi:'📡 RSSI', tabStock:'📈 Stock', tabWeather:'🌤 Weather', tabSettings:'⚙ Settings',
-    busProfiles:'4-Profile Bus ETA', profileName:'Profile name', colA:'Column A', colB:'Column B',
-    syncRoutes:'🔄 Sync routes', sendBus:'📡 Send Bus config',
-    rssiTitle:'RSSI Monitor', sendRssi:'📡 Send RSSI config',
-    stockTitle:'Stock Watchlist ETL', fetchStock:'📈 Fetch & push', autoStock:'Auto 60s',
-    weatherTitle:'HKO Weather ETL', weatherDesc:'rhrread + fnd → weather (retain: false)', fetchWeather:'🌤 Fetch HKO & push', autoWeather:'Auto 30s',
-    settingsTitle:'Device settings', bright:'Brightness', timeout:'Timeout', never:'Never', lang:'Language',
-    wifiSsid:'WiFi SSID', wifiPass:'WiFi password', sendWifi:'📶 Send WiFi',
-    refreshEta:'⟳ Refresh ETA', reboot:'↻ Reboot', sendSettings:'Send settings only',
-    logTitle:'Sync log', logWait:'— Waiting —'
+    title:'M5 Keychain CRM Console', subtitle:'v6.0 · Bus · RSSI · Stock · Weather',
+    mqttTitle:'MQTT Connection', disconnected:'Offline', connected:'Online', deviceId:'Device ID',
+    connect:'Connect', disconnect:'Disconnect',
+    tabBus:'Bus ETA', tabRssi:'RSSI Radar', tabStock:'Stocks', tabWeather:'Weather', tabSettings:'Settings',
+    busProfiles:'Dual-Column Bus Profiles', profileName:'Profile Name', colA:'Column A', colB:'Column B',
+    syncRoutes:'🔄 Sync routes', sendBus:'📡 Push Bus Profile to M5',
+    rssiTitle:'WiFi RSSI Radar Target', lblTargetSsid:'Target Wi-Fi SSID', lblTargetMac:'Target MAC (optional)',
+    sendRssi:'📡 Push RSSI Settings to M5',
+    stockTitle:'HK / US Stock Watchlist', fetchStock:'📈 Fetch Yahoo & Push to M5', autoStock:'Auto 60s',
+    weatherTitle:'HKO Open Data Sync',
+    weatherDesc:'Fetches HKO warnings and 9-day forecast, then pushes to m5bus_<ID>/weather (retain: false).',
+    fetchWeather:'🌦️ Fetch & Push HKO Weather to M5', autoWeather:'Auto 30s',
+    settingsTitle:'M5 Preferences', bright:'Screen Brightness', timeout:'Auto-Sleep Timeout', never:'Never sleep', lang:'M5 Display Language',
+    wifiSsid:'WiFi SSID', wifiPass:'WiFi Password', sendWifi:'📶 Send WiFi to M5',
+    refreshEta:'⟳ Refresh ETA', reboot:'↻ Reboot M5', sendSettings:'💾 Save Settings Only',
+    logTitle:'Sync Log', logWait:'— Waiting —'
   }
 };
 
 let lang = localStorage.getItem('m5-lang') || 'zh';
+let weatherTimer = null, stockTimer = null;
 const $ = id => document.getElementById(id);
 const t = k => (I18N[lang] && I18N[lang][k]) || I18N.zh[k] || k;
 
 function applyI18n() {
-  document.documentElement.lang = lang === 'en' ? 'en' : 'zh-Hant';
+  document.documentElement.lang = lang === 'en' ? 'en' : 'zh-HK';
   document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
-  $('langSelect').value = lang;
+  $('langBtn').textContent = lang === 'zh' ? '繁體中文 / EN' : 'EN / 繁體中文';
 }
 
 function toast(msg, type='info') {
   const el = $('toast');
-  const colors = {info:'border-slate-600', ok:'border-emerald-500 text-emerald-300', err:'border-red-500 text-red-300'};
-  el.className = `fixed bottom-20 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-sm shadow-lg border ${colors[type]||colors.info}`;
   el.textContent = msg;
-  el.classList.remove('hidden');
+  el.className = 'show' + (type === 'ok' ? ' ok' : type === 'err' ? ' err' : '');
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.add('hidden'), 2800);
+  toast._t = setTimeout(() => { el.className = ''; }, 2800);
 }
 
 function log(msg, type='info') {
   const el = $('log');
-  const colors = {info:'text-slate-400', ok:'text-emerald-400', err:'text-red-400', warn:'text-amber-400'};
+  const cls = {info:'log-info', ok:'log-ok', err:'log-err', warn:'log-warn'};
   const line = document.createElement('p');
-  line.className = colors[type]||colors.info;
+  line.className = cls[type] || cls.info;
   const time = new Date().toLocaleTimeString(lang==='en'?'en-GB':'zh-HK',{hour12:false});
   line.textContent = `[${time}] ${msg}`;
-  if (el.firstChild?.textContent?.includes('等待')||el.firstChild?.textContent?.includes('Waiting')) el.innerHTML='';
+  const first = el.firstChild;
+  if (first && (first.textContent.includes('等待') || first.textContent.includes('Waiting'))) el.innerHTML = '';
   el.prepend(line);
   while (el.children.length > 30) el.removeChild(el.lastChild);
 }
@@ -235,11 +375,10 @@ const KMB = 'https://data.etabus.gov.hk/v1/transport/kmb';
 const CTB = 'https://rt.data.gov.hk/v2/transport/citybus';
 const HKO = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php';
 const PROFILE_COUNT = 4;
-const STOCK_SLOTS = 4;
 const DB_KEY = 'm5-v6-db';
 const DEVICE_KEY = 'm5-device-id';
 
-let mqttClient = null, connected = false, lastStatus = null, lastStatusMs = 0;
+let mqttClient = null, connected = false, lastStatus = null;
 let uiProfile = 0, kmbRoutes = [], ctbRoutes = [], kmbNums = [], ctbNums = [], ctbStops = null;
 let liveWifiNetworks = [];
 
@@ -249,7 +388,7 @@ function topic(suffix) { return `m5bus_${getId()}/${suffix}`; }
 function translateAndShortenName(rawText) {
   if (!rawText) return '';
   let s = String(rawText).trim();
-  s = s.replace(/(公共運輸交匯處|巴士總站|轉車站|特別班次)$/g, '');
+  s = s.replace(/(公共運輸交匯處|巴士總站|轉車站|特別班次|邨|樓)$/g, '');
   s = s.replace(/(Public Transport Interchange|Bus Terminus|Station)$/gi, '');
   s = s.replace(/\s+/g, '');
   const units = [...s];
@@ -296,22 +435,20 @@ function buildConfigPayload() {
 
 function setCloud(on, detail='') {
   connected = on && !!mqttClient;
-  $('cloudDot').className = on ? 'status-dot h-2.5 w-2.5 rounded-full bg-emerald-400' : 'status-dot h-2.5 w-2.5 rounded-full bg-slate-600';
-  $('cloudLabel').textContent = on ? (detail||t('connected')) : t('disconnected');
-  $('cloudLabel').className = on ? 'text-emerald-400' : 'text-slate-500';
+  const badge = $('connBadge');
+  badge.textContent = on ? (detail || t('connected')) : t('disconnected');
+  badge.className = 'status-badge ' + (on ? 'status-online' : 'status-offline');
   $('btnConnect').textContent = on ? t('disconnect') : t('connect');
-  document.querySelectorAll('button:not(#btnConnect)').forEach(b => { if (!on) b.disabled = true; else b.disabled = false; });
+  document.querySelectorAll('button:not(#btnConnect):not(#langBtn)').forEach(b => { b.disabled = !on; });
 }
 
 function setLive(on, detail='') {
-  const b = $('liveBadge');
+  const badge = $('liveBadge');
   if (on) {
-    b.className = 'inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950 px-2 py-1 text-xs text-emerald-300';
-    $('liveDot').className = 'status-dot h-2 w-2 rounded-full bg-emerald-400';
+    badge.className = 'status-badge status-live';
     $('liveText').textContent = detail ? `Live · ${detail}` : 'Live';
   } else {
-    b.className = 'inline-flex items-center gap-1 rounded-full border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-500';
-    $('liveDot').className = 'h-2 w-2 rounded-full bg-slate-600';
+    badge.className = 'status-badge status-offline';
     $('liveText').textContent = 'Offline';
   }
 }
@@ -321,7 +458,7 @@ function disconnect() {
   if (weatherTimer) { clearInterval(weatherTimer); weatherTimer=null; }
   if (stockTimer) { clearInterval(stockTimer); stockTimer=null; }
   setCloud(false); setLive(false);
-  log('Disconnected','warn');
+  log(lang==='en'?'Disconnected':'已中斷連線','warn');
 }
 
 function connect() {
@@ -331,9 +468,10 @@ function connect() {
   if (mqttClient) disconnect();
   mqttClient = mqtt.connect(MQTT_WS, {clientId:`web-${id}-${Math.random().toString(36).slice(2,8)}`,clean:true,reconnectPeriod:4000});
   mqttClient.on('connect', () => {
-    setCloud(true,'HiveMQ');
+    setCloud(true, 'HiveMQ');
     mqttClient.subscribe([topic('state'), topic('wifi_scan'), topic('request')], {qos:0});
-    log('MQTT connected','ok'); toast(t('connected'),'ok');
+    log(lang==='en'?'MQTT connected':'MQTT 已連線','ok');
+    toast(lang==='en'?'Connected':'🟢 成功建立 MQTT 連線！','ok');
     startAutoSync();
   });
   mqttClient.on('message', (tpc, buf) => {
@@ -352,13 +490,13 @@ function connect() {
         const sel = $('scanResults'); sel.innerHTML='';
         liveWifiNetworks.forEach((n,i) => { const o=document.createElement('option'); o.value=String(i); o.textContent=`${n.ssid} (${n.rssi}dBm)`; sel.appendChild(o); });
         sel.disabled = !liveWifiNetworks.length;
+        log(lang==='en'?'WiFi scan received':'收到 WiFi 掃描結果','ok');
       } catch{}
       return;
     }
     if (!tpc.endsWith('/state')) return;
     try {
       lastStatus = JSON.parse(buf.toString());
-      lastStatusMs = Date.now();
       if (lastStatus.settings) {
         if (lastStatus.settings.bright!=null) $('bright').value = String(lastStatus.settings.bright);
         if (lastStatus.settings.timeout!=null) $('timeout').value = String(lastStatus.settings.timeout);
@@ -367,7 +505,7 @@ function connect() {
       }
       const pct = lastStatus.battery;
       const bb = $('batteryBadge');
-      if (pct!=null && pct>=0) { bb.classList.remove('hidden'); bb.classList.add('inline-flex'); $('batteryPct').textContent=`${pct}%`; }
+      if (pct!=null && pct>=0) { bb.classList.remove('hidden'); $('batteryPct').textContent=`🔋 ${pct}%`; }
       if (lastStatus.radar_rssi!=null) {
         $('rssiLive').classList.remove('hidden');
         $('rssiLive').textContent = `RSSI ${lastStatus.radar_rssi} dBm · ${lastStatus.radar_pct}%`;
@@ -382,7 +520,7 @@ function connect() {
 function pubConfig() {
   return new Promise((res,rej) => {
     const payload = JSON.stringify(buildConfigPayload());
-    mqttClient.publish(topic('config'), payload, {qos:0, retain:true}, e => e?rej(e):res());
+    mqttClient.publish(topic('config'), payload, {qos:0, retain:false}, e => e?rej(e):res());
   });
 }
 
@@ -430,12 +568,12 @@ async function buildWeather() {
 }
 
 async function pushWeather() {
-  if (!connected) throw new Error('MQTT not connected');
+  if (!connected) throw new Error(lang==='en'?'MQTT not connected':'請先連線 MQTT');
   const payload = await buildWeather();
   $('weatherPreview').textContent = JSON.stringify(payload,null,2);
   await pubJson('weather', payload);
   log(lang==='en'?'Weather pushed':'天氣已推送','ok');
-  toast(lang==='en'?'Weather sent':'天氣已發送','ok');
+  toast(lang==='en'?'Weather sent':'🚀 天氣已發送至 M5','ok');
 }
 
 async function buildStock(symbol, name) {
@@ -455,14 +593,14 @@ async function buildStock(symbol, name) {
 }
 
 async function pushStock() {
-  if (!connected) throw new Error('MQTT not connected');
+  if (!connected) throw new Error(lang==='en'?'MQTT not connected':'請先連線 MQTT');
   const db = loadDb();
   const slot = db.stocks[0]||{symbol:'0700.HK',name:'Tencent'};
   const payload = await buildStock(slot.symbol, slot.name);
   $('stockPreview').textContent = JSON.stringify(payload,null,2);
   await pubJson('stock', payload);
   log(lang==='en'?'Stock pushed':'股票已推送','ok');
-  toast(lang==='en'?'Stock sent':'股票已發送','ok');
+  toast(lang==='en'?'Stock sent':'🚀 股票已發送至 M5','ok');
 }
 
 function startAutoSync() {
@@ -472,7 +610,6 @@ function startAutoSync() {
   if ($('stockAuto').checked) stockTimer = setInterval(() => pushStock().catch(e=>log(e.message,'err')), 60000);
 }
 
-// Route helpers
 function getCo(side) { return $(side==='B'?'coB':'coA').value==='CTB'?'CTB':'KMB'; }
 function getRoute(side) { return $(side==='B'?'routeB':'routeA').value.trim().toUpperCase(); }
 function routes(co) { return co==='CTB'?ctbRoutes:kmbRoutes; }
@@ -546,10 +683,12 @@ function saveProfileToDb() {
 function initProfileTabs() {
   const tabs = $('profileTabs');
   tabs.innerHTML='';
+  const labels = lang==='en' ? ['P1 Work','P2 School','P3 Home','P4 Holiday'] : ['P1 返工','P2 放學','P3 返屋企','P4 假日'];
   for (let i=0;i<PROFILE_COUNT;i++) {
     const b=document.createElement('button');
-    b.className=`flex-1 rounded py-1 text-xs ${i===uiProfile?'bg-amber-600 text-white':'text-slate-400'}`;
-    b.textContent=`P${i+1}`;
+    b.type='button';
+    b.className='p-btn'+(i===uiProfile?' active':'');
+    b.textContent=labels[i];
     b.onclick=()=>{ saveProfileToDb(); uiProfile=i; loadProfileUi(); initProfileTabs(); };
     tabs.appendChild(b);
   }
@@ -570,9 +709,9 @@ function initStockSlots() {
   wrap.innerHTML='';
   db.stocks.forEach((s,i) => {
     const row = document.createElement('div');
-    row.className='flex gap-2';
-    row.innerHTML=`<input data-si="${i}" data-f="symbol" class="flex-1 rounded bg-slate-900 px-2 py-1 text-sm" value="${s.symbol||''}" />
-      <input data-si="${i}" data-f="name" class="flex-1 rounded bg-slate-900 px-2 py-1 text-sm" value="${s.name||''}" />`;
+    row.className='stock-card';
+    row.innerHTML=`<input data-si="${i}" data-f="symbol" placeholder="Symbol" value="${s.symbol||''}" />
+      <input data-si="${i}" data-f="name" placeholder="Name" value="${s.name||''}" />`;
     wrap.appendChild(row);
   });
   wrap.querySelectorAll('input').forEach(inp => inp.addEventListener('change', () => {
@@ -581,10 +720,10 @@ function initStockSlots() {
 }
 
 function switchTab(name) {
-  document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
   $('panel-'+name).classList.remove('hidden');
-  document.querySelectorAll('.tab').forEach(b=>{
-    b.className = b.dataset.tab===name ? 'tab flex-1 rounded-lg bg-amber-600 py-2 font-semibold text-xs' : 'tab flex-1 rounded-lg py-2 text-xs text-slate-400';
+  document.querySelectorAll('.tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === name);
   });
 }
 
@@ -597,30 +736,37 @@ function parseUrlId() {
 }
 
 function bindEvents() {
-  $('langSelect').onchange = () => {
-    lang = $('langSelect').value;
+  $('langBtn').onclick = () => {
+    lang = lang === 'zh' ? 'en' : 'zh';
     localStorage.setItem('m5-lang', lang);
     $('m5lang').value = lang === 'en' ? '1' : '0';
     applyI18n();
+    initProfileTabs();
   };
-  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
   $('btnConnect').onclick = () => { try { connected?disconnect():connect(); } catch(e){log(e.message,'err');toast(e.message,'err');} };
   $('btnSyncRoutes').onclick = () => syncRoutes().catch(e=>log(e.message,'err'));
   ['A','B'].forEach(s => {
     $(s==='B'?'routeB':'routeA').onchange = async () => { populateVariants(getRoute(s),s); await loadStops(s); };
     $(s==='B'?'variantB':'variantA').onchange = () => loadStops(s);
   });
-  $('btnSendBus').onclick = async () => { saveProfileToDb(); try{await pubConfig();log('Bus config sent','ok');toast('OK','ok');}catch(e){log(e.message,'err');} };
-  $('btnSendRssi').onclick = async () => { try{await pubConfig();log('RSSI config sent','ok');}catch(e){log(e.message,'err');} };
-  $('btnSendWifi').onclick = async () => { try{await pubConfig();log('WiFi sent','ok');}catch(e){log(e.message,'err');} };
-  $('btnSendSettings').onclick = async () => { try{await pubConfig();log('Settings sent','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendBus').onclick = async () => { saveProfileToDb(); try{await pubConfig();log(lang==='en'?'Bus config sent':'巴士設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendRssi').onclick = async () => { try{await pubConfig();log(lang==='en'?'RSSI config sent':'RSSI 設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendWifi').onclick = async () => {
+    const db = loadDb();
+    db.config.wifiSsid = $('wifiSsid').value.trim();
+    db.config.wifiPass = $('wifiPass').value;
+    saveDb(db);
+    try{await pubConfig();log(lang==='en'?'WiFi sent':'WiFi 已發送','ok');toast(lang==='en'?'WiFi sent':'📶 WiFi 已發送','ok');}catch(e){log(e.message,'err');}
+  };
+  $('btnSendSettings').onclick = async () => { try{await pubConfig();log(lang==='en'?'Settings sent':'設定已發送','ok');toast(lang==='en'?'Saved':'💾 已儲存','ok');}catch(e){log(e.message,'err');} };
   $('btnFetchWeather').onclick = () => pushWeather().catch(e=>{log(e.message,'err');toast(e.message,'err');});
   $('btnFetchStock').onclick = () => pushStock().catch(e=>{log(e.message,'err');toast(e.message,'err');});
   $('weatherAuto').onchange = startAutoSync;
   $('stockAuto').onchange = startAutoSync;
-  $('btnRefreshEta').onclick = () => pubCmd('refresh_eta').then(()=>log('ETA refresh','ok')).catch(e=>log(e.message,'err'));
-  $('btnReboot').onclick = () => pubCmd('reboot').then(()=>log('Reboot sent','ok')).catch(e=>log(e.message,'err'));
-  $('btnScanWifi').onclick = () => pubCmd('scan_wifi').then(()=>log('Scan requested','ok')).catch(e=>log(e.message,'err'));
+  $('btnRefreshEta').onclick = () => pubCmd('refresh_eta').then(()=>log(lang==='en'?'ETA refresh':'ETA 已刷新','ok')).catch(e=>log(e.message,'err'));
+  $('btnReboot').onclick = () => pubCmd('reboot').then(()=>log(lang==='en'?'Reboot sent':'重啟指令已發送','ok')).catch(e=>log(e.message,'err'));
+  $('btnScanWifi').onclick = () => pubCmd('scan_wifi').then(()=>log(lang==='en'?'Scan requested':'已請求 WiFi 掃描','ok')).catch(e=>log(e.message,'err'));
   $('scanResults').onchange = () => {
     const n = liveWifiNetworks[Number($('scanResults').value)];
     if (!n) return;

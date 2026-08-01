@@ -148,6 +148,7 @@ static bool g_weatherForecastView = false;
 static int g_imuRotation = 0;
 static int g_radarRssi = -127, g_radarPct = 0, g_radarCh = 0;
 static uint32_t g_lastActivity = 0, g_lastEta = 0, g_lastState = 0;
+static bool g_bootTasksDone = false;
 static bool g_mqttOk = false;
 static char g_lastAction[20] = "";
 static uint32_t g_lastActionSeq = 0;
@@ -160,6 +161,25 @@ static void touch() { g_lastActivity = millis(); }
 static uint8_t brightVal() {
     static const uint8_t lv[] = {64, 128, 192, 255};
     return lv[g_cfg.bright > 3 ? 1 : g_cfg.bright];
+}
+
+static void wakeDisplay() {
+    M5.Display.wakeup();
+    M5.Display.setBrightness(brightVal());
+}
+
+static void drawBootSplash() {
+    wakeDisplay();
+    M5.Display.fillScreen(C_BG);
+    M5.Display.setTextColor(C_CYAN);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(8, 90);
+    M5.Display.print("M5 Bus v6");
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(C_DIM);
+    M5.Display.setCursor(8, 115);
+    M5.Display.print(g_cfg.english ? "Starting..." : "啟動中...");
+    touch();
 }
 
 static uint32_t timeoutMs() {
@@ -986,7 +1006,9 @@ static KeyEngine g_keys;
 static AppMode g_lastMode = AppMode::Count;
 
 static void renderFrame() {
-    if (g_ui == UiScreen::QrCode) { renderQr(); return; }
+    if (g_ui == UiScreen::QrCode) { wakeDisplay(); renderQr(); return; }
+
+    wakeDisplay();
 
     AppModule* mod = modFor(g_cfg.appMode);
     if (g_cfg.appMode != g_lastMode) {
@@ -1020,7 +1042,7 @@ static void renderFrame() {
     g_canvas.pushSprite(0, 0);
 
     uint32_t to = timeoutMs();
-    if (to && millis() - g_lastActivity > to) M5.Display.sleep();
+    if (g_bootTasksDone && to && millis() - g_lastActivity > to) M5.Display.sleep();
 }
 
 static void connectWifi() {
@@ -1036,9 +1058,14 @@ static void connectWifi() {
 }
 
 void setup() {
-    M5.begin();
+    auto cfg = M5.config();
+    cfg.fallback_board = m5::board_t::board_M5StickS3;
+    cfg.internal_imu = true;
+    M5.begin(cfg);
+
+    g_lastActivity = millis();
     M5.Display.setRotation(0);
-    M5.Display.setBrightness(brightVal());
+    wakeDisplay();
     M5.Display.fillScreen(C_BG);
 
     g_prefs.begin("m5bus_v6", false);
@@ -1049,15 +1076,12 @@ void setup() {
     g_deviceId = id;
 
     loadNvs();
-    M5.Display.setBrightness(brightVal());
+    drawBootSplash();
 
     g_mqtt.setServer(MQTT_HOST, MQTT_PORT);
     g_mqtt.setCallback(mqttCallback);
     g_mqtt.setBufferSize(MQTT_BUFFER_SIZE);
 
-    connectWifi();
-    fetchAllEta();
-    g_lastActivity = millis();
     g_lastEta = millis();
 }
 
@@ -1075,5 +1099,17 @@ void loop() {
         if (millis() - retry > 30000) { retry = millis(); connectWifi(); }
     }
     renderFrame();
+
+    if (!g_bootTasksDone) {
+        static bool wifiDone = false;
+        if (!wifiDone) {
+            connectWifi();
+            wifiDone = true;
+        } else {
+            fetchAllEta();
+            g_bootTasksDone = true;
+            touch();
+        }
+    }
     delay(16);
 }
