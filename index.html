@@ -79,6 +79,10 @@
       class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-emerald-600 text-white">
       🚌 Bus ETA
     </button>
+    <button id="tabProfiles" type="button"
+      class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white">
+      📋 Profiles
+    </button>
     <button id="tabRadar" type="button"
       class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white">
       📡 RSSI Monitor
@@ -247,6 +251,8 @@
       <p class="mt-2"><span class="text-slate-400">config</span>（retained）：</p>
       <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-emerald-400/90">{
   "v": 2,
+  "active_profile": 0,
+  "profiles": [{ "name", "busA": {...}, "busB": {...} }, ...],
   "busA": { "co": "KMB"|"CTB", "route", "stop", "svc", "bound", "name" },
   "busB": { "co": "KMB"|"CTB", "route", "stop", "svc", "bound", "name" },
   "settings": { "bright": 0-3, "timeout": 0-3, "english": bool,
@@ -257,10 +263,28 @@
 }</pre>
       <p class="mt-1 text-[10px] text-slate-500">display_mode: 0=Auto · 1=Force Landscape · 2=Force Portrait · app_mode 切換 Bus ETA / RSSI Monitor</p>
       <p class="mt-2"><span class="text-slate-400">cmd</span>（非 retained）：</p>
-      <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off"|"rssi_monitor"|"bus_eta"|"scan_wifi", "seq": 123 }</pre>
+      <pre class="mt-1 overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-sky-400/90">{ "action": "refresh_eta"|"reboot"|"power_off"|"rssi_monitor"|"bus_eta"|"scan_wifi"|"set_profile", "profile_id": 0, "seq": 123 }</pre>
       <p class="mt-2"><span class="text-slate-400">wifi_scan</span>（M5 發布）：<code>{"networks":[{"ssid","bssid","rssi","ch"},...]}</code> → <code>m5bus/&lt;ID&gt;/wifi_scan</code></p>
       <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>screen</code>/<code>settings.app_mode</code>、<code>radar_rssi</code>/<code>radar_pct</code>（RSSI Monitor 模式時）</p>
     </details>
+  </section>
+  </div>
+
+  <div id="panelProfiles" class="hidden">
+  <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
+    <div class="mb-3 flex items-center justify-between gap-2">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">4-Profile 管理</h2>
+      <span id="profileActiveBadge" class="rounded-full border border-amber-600/50 bg-amber-950 px-2 py-0.5 text-[11px] font-medium text-amber-300">M5：P1</span>
+    </div>
+    <p class="mb-3 text-xs leading-relaxed text-slate-500">
+      儲存 4 組 Bus ETA 設定。M5 藍掣<strong>單擊</strong>循環切換 Profile；<strong>五連點</strong>進入 RSSI Monitor。
+    </p>
+    <div id="profileSlots" class="space-y-3"></div>
+    <button id="btnSendProfiles" type="button"
+      class="mt-4 w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-sm font-semibold text-white shadow-md transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
+      ☁ 發送全部 Profiles 到 M5
+    </button>
+    <p class="mt-2 text-xs text-slate-500">寫入 <code class="text-slate-400">profiles[]</code> + <code class="text-slate-400">active_profile</code> 至 MQTT config（retained）。</p>
   </section>
   </div>
 
@@ -380,33 +404,47 @@
     const DB_KEY = 'm5-bus-db';
     const WIFI_HOST_KEY = 'm5-wifi-host';
     const TRANSPORT_KEY = 'm5-transport';
-    const DB_VERSION = 1;
+    const DB_VERSION = 2;
+    const PROFILE_COUNT = 4;
     const DB_HISTORY_MAX = 12;
 
     const $ = (id) => document.getElementById(id);
 
-    function defaultDb() {
+    function defaultProfileSlot(index, withRoutes = false) {
       return {
-        v: DB_VERSION,
-        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '', radarSsidPreset: 'auto', radarCustomSsid: '', radarSsid: '', radarMac: '', appMode: 'bus' },
+        name: `P${index + 1}`,
         busA: {
           co: 'KMB',
-          route: DEFAULT_ROUTE,
-          stopId: DEFAULT_STOP_ID_A,
+          route: withRoutes ? DEFAULT_ROUTE : '',
+          stopId: withRoutes ? DEFAULT_STOP_ID_A : '',
           bound: 'O',
           serviceType: '1',
-          stopName: '',
-          variantLabel: '',
+          stopName: withRoutes ? '朗屏' : '',
         },
         busB: {
           co: 'KMB',
-          route: DEFAULT_ROUTE,
-          stopId: DEFAULT_STOP_ID_B,
+          route: withRoutes ? DEFAULT_ROUTE : '',
+          stopId: withRoutes ? DEFAULT_STOP_ID_B : '',
           bound: 'I',
           serviceType: '1',
-          stopName: '',
-          variantLabel: '',
+          stopName: withRoutes ? '上水' : '',
         },
+      };
+    }
+
+    function defaultProfiles() {
+      return Array.from({ length: PROFILE_COUNT }, (_, i) => defaultProfileSlot(i, i === 0));
+    }
+
+    function defaultDb() {
+      const profiles = defaultProfiles();
+      return {
+        v: DB_VERSION,
+        activeProfile: 0,
+        profiles,
+        config: { autoSync: false, bright: 1, timeout: 1, english: false, display_mode: 0, wifiPreset: '0', wifiPassword: '', wifiCustomSsid: '', radarSsidPreset: 'auto', radarCustomSsid: '', radarSsid: '', radarMac: '', appMode: 'bus' },
+        busA: { ...profiles[0].busA },
+        busB: { ...profiles[0].busB },
         history: [],
       };
     }
@@ -416,7 +454,24 @@
         const raw = localStorage.getItem(DB_KEY);
         if (!raw) return defaultDb();
         const db = JSON.parse(raw);
-        if (!db || db.v !== DB_VERSION) return defaultDb();
+        if (!db) return defaultDb();
+        if (!db.profiles || db.v !== DB_VERSION) {
+          const migrated = defaultDb();
+          migrated.busA = { ...migrated.busA, ...(db.busA || {}) };
+          migrated.busB = { ...migrated.busB, ...(db.busB || {}) };
+          migrated.profiles[0].busA = { ...migrated.profiles[0].busA, ...(db.busA || {}) };
+          migrated.profiles[0].busB = { ...migrated.profiles[0].busB, ...(db.busB || {}) };
+          migrated.config = { ...migrated.config, ...(db.config || {}) };
+          migrated.history = Array.isArray(db.history) ? db.history : [];
+          migrated.activeProfile = db.activeProfile ?? 0;
+          return migrated;
+        }
+        db.profiles = Array.from({ length: PROFILE_COUNT }, (_, i) => ({
+          ...defaultProfileSlot(i),
+          ...(db.profiles[i] || {}),
+          busA: { ...defaultProfileSlot(i).busA, ...(db.profiles[i]?.busA || {}) },
+          busB: { ...defaultProfileSlot(i).busB, ...(db.profiles[i]?.busB || {}) },
+        }));
         db.busA = { ...defaultDb().busA, ...(db.busA || {}) };
         db.busB = { ...defaultDb().busB, ...(db.busB || {}) };
         db.history = Array.isArray(db.history) ? db.history : [];
@@ -433,6 +488,218 @@
 
     function saveDb(db) {
       localStorage.setItem(DB_KEY, JSON.stringify(db));
+    }
+
+    function busToFirmware(bus) {
+      return {
+        co: bus.co || 'KMB',
+        route: bus.route || '',
+        stop: bus.stopId || bus.stop || '',
+        svc: bus.serviceType || bus.svc || '1',
+        bound: bus.bound || 'O',
+        name: bus.stopName || bus.name || '',
+      };
+    }
+
+    function busFromFirmware(bus) {
+      if (!bus) return defaultProfileSlot(0).busA;
+      return {
+        co: bus.co || 'KMB',
+        route: bus.route || '',
+        stopId: bus.stop || bus.stopId || '',
+        serviceType: bus.svc || bus.serviceType || '1',
+        bound: bus.bound || 'O',
+        stopName: bus.name || bus.stopName || '',
+      };
+    }
+
+    function profileSlotMarkup(i) {
+      return `
+      <details class="rounded-xl border border-surface-border bg-slate-900/50 p-3" ${i === 0 ? 'open' : ''}>
+        <summary class="cursor-pointer text-sm font-semibold text-white">Profile ${i + 1} <span id="profileSummary${i}" class="text-slate-400"></span></summary>
+        <label class="mb-1 mt-3 block text-xs text-slate-400">名稱</label>
+        <input id="profileName${i}" type="text" maxlength="31" placeholder="例：返工、放工"
+          class="mb-2 w-full rounded-lg border border-surface-border bg-slate-950 px-3 py-2 text-sm text-white" />
+        <p class="mb-1 text-xs font-medium text-cyan-400">Bus A</p>
+        <div class="mb-2 grid grid-cols-2 gap-2">
+          <input id="profileCoA${i}" placeholder="co" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
+          <input id="profileRouteA${i}" placeholder="route" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
+          <input id="profileStopA${i}" placeholder="stop id" class="col-span-2 rounded-lg border border-surface-border bg-slate-950 px-2 py-2 font-mono text-xs text-white" />
+          <input id="profileSvcA${i}" placeholder="svc" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
+          <input id="profileBoundA${i}" placeholder="bound" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
+        </div>
+        <p class="mb-1 text-xs font-medium text-orange-400">Bus B</p>
+        <div class="mb-3 grid grid-cols-2 gap-2">
+          <input id="profileCoB${i}" placeholder="co" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
+          <input id="profileRouteB${i}" placeholder="route" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
+          <input id="profileStopB${i}" placeholder="stop id" class="col-span-2 rounded-lg border border-surface-border bg-slate-950 px-2 py-2 font-mono text-xs text-white" />
+          <input id="profileSvcB${i}" placeholder="svc" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
+          <input id="profileBoundB${i}" placeholder="bound" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
+        </div>
+        <div class="flex gap-2">
+          <button type="button" data-profile-activate="${i}"
+            class="flex-1 rounded-lg border border-amber-600/50 bg-amber-950 px-2 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-900 disabled:opacity-50">⚡ 切換到 M5</button>
+          <button type="button" data-profile-reset="${i}"
+            class="rounded-lg border border-slate-600 bg-slate-950 px-2 py-2 text-xs text-slate-300 hover:bg-slate-800">重設</button>
+        </div>
+      </details>`;
+    }
+
+    function readProfileSlotFromUi(i) {
+      return {
+        name: $(`profileName${i}`).value.trim() || `P${i + 1}`,
+        busA: {
+          co: $(`profileCoA${i}`).value.trim().toUpperCase() || 'KMB',
+          route: $(`profileRouteA${i}`).value.trim().toUpperCase(),
+          stopId: $(`profileStopA${i}`).value.trim(),
+          serviceType: $(`profileSvcA${i}`).value.trim() || '1',
+          bound: $(`profileBoundA${i}`).value.trim().toUpperCase() || 'O',
+          stopName: '',
+        },
+        busB: {
+          co: $(`profileCoB${i}`).value.trim().toUpperCase() || 'KMB',
+          route: $(`profileRouteB${i}`).value.trim().toUpperCase(),
+          stopId: $(`profileStopB${i}`).value.trim(),
+          serviceType: $(`profileSvcB${i}`).value.trim() || '1',
+          bound: $(`profileBoundB${i}`).value.trim().toUpperCase() || 'I',
+          stopName: '',
+        },
+      };
+    }
+
+    function writeProfileSlotToUi(i, slot) {
+      if (!slot) return;
+      $(`profileName${i}`).value = slot.name || `P${i + 1}`;
+      $(`profileCoA${i}`).value = slot.busA?.co || 'KMB';
+      $(`profileRouteA${i}`).value = slot.busA?.route || '';
+      $(`profileStopA${i}`).value = slot.busA?.stopId || '';
+      $(`profileSvcA${i}`).value = slot.busA?.serviceType || '1';
+      $(`profileBoundA${i}`).value = slot.busA?.bound || 'O';
+      $(`profileCoB${i}`).value = slot.busB?.co || 'KMB';
+      $(`profileRouteB${i}`).value = slot.busB?.route || '';
+      $(`profileStopB${i}`).value = slot.busB?.stopId || '';
+      $(`profileSvcB${i}`).value = slot.busB?.serviceType || '1';
+      $(`profileBoundB${i}`).value = slot.busB?.bound || 'I';
+      const summary = `${slot.name || `P${i + 1}`} · ${slot.busA?.route || '?'}/${slot.busB?.route || '?'}`;
+      const el = $(`profileSummary${i}`);
+      if (el) el.textContent = `— ${summary}`;
+    }
+
+    function readAllProfilesFromUi() {
+      return Array.from({ length: PROFILE_COUNT }, (_, i) => readProfileSlotFromUi(i));
+    }
+
+    function writeAllProfilesToUi(profiles, activeProfile = 0) {
+      profiles.forEach((slot, i) => writeProfileSlotToUi(i, slot));
+      updateProfileActiveBadge(activeProfile, profiles[activeProfile]?.name);
+    }
+
+    function updateProfileActiveBadge(activeProfile = 0, name = '') {
+      const label = name ? `P${activeProfile + 1}: ${name}` : `P${activeProfile + 1}`;
+      $('profileActiveBadge').textContent = `M5：${label}`;
+    }
+
+    function initProfileSlotsUi() {
+      $('profileSlots').innerHTML = Array.from({ length: PROFILE_COUNT }, (_, i) => profileSlotMarkup(i)).join('');
+      const db = loadDb();
+      writeAllProfilesToUi(db.profiles, db.activeProfile ?? 0);
+      $('profileSlots').querySelectorAll('[data-profile-activate]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const idx = Number(btn.dataset.profileActivate);
+          try {
+            await activateProfileOnM5(idx);
+          } catch (e) {
+            log(`切換 Profile 失敗：${e.message}`, 'err');
+          }
+        });
+      });
+      $('profileSlots').querySelectorAll('[data-profile-reset]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.dataset.profileReset);
+          const slot = defaultProfileSlot(idx, idx === 0);
+          writeProfileSlotToUi(idx, slot);
+          const db = loadDb();
+          db.profiles[idx] = slot;
+          saveDb(db);
+          log(`Profile ${idx + 1} 已重設`, 'warn');
+        });
+      });
+      $('profileSlots').querySelectorAll('input').forEach((el) => {
+        el.addEventListener('input', () => {
+          const db = loadDb();
+          db.profiles = readAllProfilesFromUi();
+          saveDb(db);
+          db.profiles.forEach((slot, i) => {
+            const summary = `${slot.name} · ${slot.busA.route || '?'}/${slot.busB.route || '?'}`;
+            const sumEl = $(`profileSummary${i}`);
+            if (sumEl) sumEl.textContent = `— ${summary}`;
+          });
+        });
+      });
+    }
+
+    function buildProfilesPayload(activeProfile = null) {
+      const db = loadDb();
+      const profiles = readAllProfilesFromUi();
+      const active = activeProfile != null ? activeProfile : (db.activeProfile ?? 0);
+      const activeSlot = profiles[active] || profiles[0];
+      return {
+        v: 2,
+        active_profile: active,
+        profiles: profiles.map((p) => ({
+          name: p.name,
+          busA: busToFirmware(p.busA),
+          busB: busToFirmware(p.busB),
+        })),
+        busA: busToFirmware(activeSlot.busA),
+        busB: busToFirmware(activeSlot.busB),
+        settings: {
+          ...getSettingsFromUi(),
+          wifi: getWifiFromUi(),
+          radar: getRadarFromUi(),
+        },
+      };
+    }
+
+    async function sendProfilesToM5(activeProfile = null) {
+      if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
+      const payload = JSON.stringify(buildProfilesPayload(activeProfile));
+      const meta = buildAckMeta();
+      await sendPayloadToM5(payload, meta);
+      const db = loadDb();
+      db.profiles = readAllProfilesFromUi();
+      if (activeProfile != null) db.activeProfile = activeProfile;
+      db.busA = db.profiles[db.activeProfile]?.busA || db.busA;
+      db.busB = db.profiles[db.activeProfile]?.busB || db.busB;
+      saveDb(db);
+      log('4-Profile 設定已發送到 M5', 'ok');
+    }
+
+    async function activateProfileOnM5(index) {
+      if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
+      const profiles = readAllProfilesFromUi();
+      const payload = JSON.stringify({
+        v: 2,
+        active_profile: index,
+        profile_id: index,
+        name: profiles[index]?.name || `P${index + 1}`,
+        busA: busToFirmware(profiles[index].busA),
+        busB: busToFirmware(profiles[index].busB),
+      });
+      await sendPayloadToM5(payload, buildAckMeta());
+      const id = getDeviceId();
+      await new Promise((resolve, reject) => {
+        mqttClient.publish(topicCmd(id), JSON.stringify({ action: 'set_profile', profile_id: index, seq: Date.now() }), { qos: 0, retain: false }, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      const db = loadDb();
+      db.profiles = profiles;
+      db.activeProfile = index;
+      saveDb(db);
+      updateProfileActiveBadge(index, profiles[index]?.name);
+      log(`已切換 M5 至 Profile ${index + 1}（${profiles[index]?.name}）`, 'ok');
     }
 
     function snapshotBus(side) {
@@ -901,6 +1168,21 @@
       updateBatteryBadge(msg);
       updateWifiStatusLine(msg);
       updateRadarLiveLine(msg);
+      if (msg?.active_profile != null) {
+        const db = loadDb();
+        db.activeProfile = Number(msg.active_profile);
+        if (Array.isArray(msg.profiles) && msg.profiles.length) {
+          db.profiles = msg.profiles.map((p, i) => ({
+            name: p.name || `P${i + 1}`,
+            busA: busFromFirmware(p.busA),
+            busB: busFromFirmware(p.busB),
+          }));
+          writeAllProfilesToUi(db.profiles, db.activeProfile);
+        } else {
+          updateProfileActiveBadge(db.activeProfile, msg.profile_name || '');
+        }
+        saveDb(db);
+      }
     }
 
     function buildAckMeta() {
@@ -936,6 +1218,7 @@
       $('btnExitRssi').disabled = !connected;
       $('btnRadarUseM5Wifi').disabled = !connected;
       $('btnRadarScanWifi').disabled = !connected;
+      $('btnSendProfiles').disabled = !connected;
       $('btnSendWifi').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
@@ -1541,8 +1824,18 @@
       const variant = getSelectedVariant();
       const variantB = getSelectedVariantB();
       const settings = getSettingsFromUi();
+      const profiles = readAllProfilesFromUi();
+      const db = loadDb();
+      const active = db.activeProfile ?? 0;
+      const activeSlot = profiles[active] || profiles[0];
       return JSON.stringify({
         v: 2,
+        active_profile: active,
+        profiles: profiles.map((p) => ({
+          name: p.name,
+          busA: busToFirmware(p.busA),
+          busB: busToFirmware(p.busB),
+        })),
         busA: {
           co: getCo('A'),
           route: getRoute(),
@@ -1630,6 +1923,13 @@
       const db = loadDb();
       db.busA = snapshotBus('A');
       db.busB = snapshotBus('B');
+      const ap = db.activeProfile ?? 0;
+      if (!db.profiles) db.profiles = defaultProfiles();
+      db.profiles[ap] = {
+        ...db.profiles[ap],
+        busA: db.busA,
+        busB: db.busB,
+      };
       db.config = { ...db.config, ...settingsToDbConfig(settings) };
       pushHistory(db);
       saveDb(db);
@@ -1802,18 +2102,33 @@
 
     function switchAppTab(tab) {
       const isBus = tab === 'bus';
+      const isProfiles = tab === 'profiles';
+      const isRadar = tab === 'radar';
       $('panelBus').classList.toggle('hidden', !isBus);
-      $('panelRadar').classList.toggle('hidden', isBus);
+      $('panelProfiles').classList.toggle('hidden', !isProfiles);
+      $('panelRadar').classList.toggle('hidden', !isRadar);
       $('tabBus').className = isBus
         ? 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-emerald-600 text-white'
         : 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white';
-      $('tabRadar').className = !isBus
+      $('tabProfiles').className = isProfiles
+        ? 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-amber-600 text-white'
+        : 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white';
+      $('tabRadar').className = isRadar
         ? 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-cyan-600 text-white'
         : 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white';
     }
 
     $('tabBus').addEventListener('click', () => switchAppTab('bus'));
+    $('tabProfiles').addEventListener('click', () => switchAppTab('profiles'));
     $('tabRadar').addEventListener('click', () => switchAppTab('radar'));
+
+    $('btnSendProfiles').addEventListener('click', async () => {
+      try {
+        await sendProfilesToM5();
+      } catch (e) {
+        log(`Profiles 發送失敗：${e.message}`, 'err');
+      }
+    });
 
     $('btnSendRadar').addEventListener('click', async () => {
       try {
@@ -1969,6 +2284,7 @@
     const savedId = localStorage.getItem(DEVICE_ID_KEY) || '';
     if (savedId) $('deviceId').value = savedId;
     updateSendControls();
+    initProfileSlotsUi();
     log('架構：雲端 Config · M5 直連九巴／城巴 ETA · NVS db_json 離線保護', 'info');
     log('請在 M5 選單 → 關於 查看 Device ID，再連線雲端 Config', 'info');
 
