@@ -79,10 +79,6 @@
       class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-emerald-600 text-white">
       🚌 Bus ETA
     </button>
-    <button id="tabProfiles" type="button"
-      class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white">
-      📋 Profiles
-    </button>
     <button id="tabRadar" type="button"
       class="tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white">
       📡 RSSI Monitor
@@ -122,10 +118,33 @@
     <p class="mt-2 text-xs text-slate-500">經 MQTT <code class="text-slate-400">config</code> 傳送 <code class="text-slate-400">settings.wifi</code>；M5 會寫入 NVS 並即時重新連線。</p>
   </section>
 
-  <!-- Route Config -->
+  <!-- Route Config + 4-Profile Bus Picker -->
   <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
     <div class="mb-3 flex items-center justify-between gap-2">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">左欄 (方向 A)</h2>
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">4-Profile Bus ETA</h2>
+      <span id="profileActiveBadge" class="rounded-full border border-amber-600/50 bg-amber-950 px-2 py-0.5 text-[11px] font-medium text-amber-300">M5：P1</span>
+    </div>
+    <p class="mb-3 text-xs leading-relaxed text-slate-500">
+      M5 藍掣<strong>單擊</strong>循環切換 Profile；<strong>五連點</strong>進入 RSSI Monitor。切換下方 Profile 分頁可編輯各組路線。
+    </p>
+
+    <nav id="profileTabNav" class="mb-3 flex gap-1 rounded-xl border border-surface-border bg-slate-900 p-1">
+      <button type="button" id="profileTab0" data-profile-tab="0"
+        class="profile-tab flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition bg-amber-600 text-white">P1</button>
+      <button type="button" id="profileTab1" data-profile-tab="1"
+        class="profile-tab flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition text-slate-400 hover:text-white">P2</button>
+      <button type="button" id="profileTab2" data-profile-tab="2"
+        class="profile-tab flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition text-slate-400 hover:text-white">P3</button>
+      <button type="button" id="profileTab3" data-profile-tab="3"
+        class="profile-tab flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition text-slate-400 hover:text-white">P4</button>
+    </nav>
+
+    <label class="mb-1 block text-xs text-slate-400" for="profileNameInput">Profile 名稱</label>
+    <input id="profileNameInput" type="text" maxlength="31" placeholder="例：返工 (1A / 2X)"
+      class="mb-3 w-full rounded-xl border border-surface-border bg-slate-900 px-3 py-3 text-sm text-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500" />
+
+    <div class="mb-3 flex items-center justify-between gap-2">
+      <h3 class="text-sm font-semibold text-slate-400">左欄 (方向 A)</h3>
       <button id="btnRefreshRoutes" type="button"
         class="shrink-0 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">
         🔄 同步路線
@@ -183,9 +202,20 @@
     </select>
     <p id="stopMetaB" class="mb-4 font-mono text-xs text-slate-500"></p>
 
+    <div class="mb-3 flex flex-wrap gap-2">
+      <button type="button" id="btnProfileReset"
+        class="rounded-xl border border-slate-600 bg-slate-950 px-3 py-2 text-xs text-slate-300 transition hover:bg-slate-800">
+        ↺ 重設此 Profile
+      </button>
+      <button type="button" id="btnProfileActivate"
+        class="rounded-xl border border-amber-600/50 bg-amber-950 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-900 disabled:opacity-50">
+        ⚡ 切換此 Profile 到 M5
+      </button>
+    </div>
+
     <button id="btnSend"
       class="mb-2 w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-base font-semibold text-white shadow-md transition active:scale-[0.98] hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
-      發送完整設定到 M5
+      📡 發送 Profile 設定到 M5
     </button>
     <button id="btnSendSettings" type="button"
       class="w-full rounded-xl border border-emerald-600/40 bg-emerald-950 px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50">
@@ -267,24 +297,6 @@
       <p class="mt-2"><span class="text-slate-400">wifi_scan</span>（M5 發布）：<code>{"networks":[{"ssid","bssid","rssi","ch"},...]}</code> → <code>m5bus/&lt;ID&gt;/wifi_scan</code></p>
       <p class="mt-2"><span class="text-slate-400">status</span>（M5 確認）：含 <code>battery</code>、<code>screen</code>/<code>settings.app_mode</code>、<code>radar_rssi</code>/<code>radar_pct</code>（RSSI Monitor 模式時）</p>
     </details>
-  </section>
-  </div>
-
-  <div id="panelProfiles" class="hidden">
-  <section class="mb-5 rounded-2xl border border-surface-border bg-surface-card p-4 shadow-lg">
-    <div class="mb-3 flex items-center justify-between gap-2">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">4-Profile 管理</h2>
-      <span id="profileActiveBadge" class="rounded-full border border-amber-600/50 bg-amber-950 px-2 py-0.5 text-[11px] font-medium text-amber-300">M5：P1</span>
-    </div>
-    <p class="mb-3 text-xs leading-relaxed text-slate-500">
-      儲存 4 組 Bus ETA 設定。M5 藍掣<strong>單擊</strong>循環切換 Profile；<strong>五連點</strong>進入 RSSI Monitor。
-    </p>
-    <div id="profileSlots" class="space-y-3"></div>
-    <button id="btnSendProfiles" type="button"
-      class="mt-4 w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-sm font-semibold text-white shadow-md transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">
-      ☁ 發送全部 Profiles 到 M5
-    </button>
-    <p class="mt-2 text-xs text-slate-500">寫入 <code class="text-slate-400">profiles[]</code> + <code class="text-slate-400">active_profile</code> 至 MQTT config（retained）。</p>
   </section>
   </div>
 
@@ -514,140 +526,137 @@
       };
     }
 
-    function profileSlotMarkup(i) {
-      return `
-      <details class="rounded-xl border border-surface-border bg-slate-900/50 p-3" ${i === 0 ? 'open' : ''}>
-        <summary class="cursor-pointer text-sm font-semibold text-white">Profile ${i + 1} <span id="profileSummary${i}" class="text-slate-400"></span></summary>
-        <label class="mb-1 mt-3 block text-xs text-slate-400">名稱</label>
-        <input id="profileName${i}" type="text" maxlength="31" placeholder="例：返工、放工"
-          class="mb-2 w-full rounded-lg border border-surface-border bg-slate-950 px-3 py-2 text-sm text-white" />
-        <p class="mb-1 text-xs font-medium text-cyan-400">Bus A</p>
-        <div class="mb-2 grid grid-cols-2 gap-2">
-          <input id="profileCoA${i}" placeholder="co" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
-          <input id="profileRouteA${i}" placeholder="route" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
-          <input id="profileStopA${i}" placeholder="stop id" class="col-span-2 rounded-lg border border-surface-border bg-slate-950 px-2 py-2 font-mono text-xs text-white" />
-          <input id="profileSvcA${i}" placeholder="svc" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
-          <input id="profileBoundA${i}" placeholder="bound" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
-        </div>
-        <p class="mb-1 text-xs font-medium text-orange-400">Bus B</p>
-        <div class="mb-3 grid grid-cols-2 gap-2">
-          <input id="profileCoB${i}" placeholder="co" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
-          <input id="profileRouteB${i}" placeholder="route" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
-          <input id="profileStopB${i}" placeholder="stop id" class="col-span-2 rounded-lg border border-surface-border bg-slate-950 px-2 py-2 font-mono text-xs text-white" />
-          <input id="profileSvcB${i}" placeholder="svc" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
-          <input id="profileBoundB${i}" placeholder="bound" class="rounded-lg border border-surface-border bg-slate-950 px-2 py-2 text-xs text-white" />
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <button type="button" data-profile-save="${i}"
-            class="flex-1 rounded-lg border border-emerald-600/50 bg-emerald-950 px-2 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-900 disabled:opacity-50">💾 儲存 Profile</button>
-          <button type="button" data-profile-activate="${i}"
-            class="flex-1 rounded-lg border border-amber-600/50 bg-amber-950 px-2 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-900 disabled:opacity-50">⚡ 切換到 M5</button>
-          <button type="button" data-profile-reset="${i}"
-            class="rounded-lg border border-slate-600 bg-slate-950 px-2 py-2 text-xs text-slate-300 hover:bg-slate-800">重設</button>
-        </div>
-      </details>`;
-    }
+    let uiProfileIndex = 0;
+    let profileSwitchToken = 0;
 
-    function readProfileSlotFromUi(i) {
+    function readCurrentProfileFromPicker() {
       return {
-        name: $(`profileName${i}`).value.trim() || `P${i + 1}`,
-        busA: {
-          co: $(`profileCoA${i}`).value.trim().toUpperCase() || 'KMB',
-          route: $(`profileRouteA${i}`).value.trim().toUpperCase(),
-          stopId: $(`profileStopA${i}`).value.trim(),
-          serviceType: $(`profileSvcA${i}`).value.trim() || '1',
-          bound: $(`profileBoundA${i}`).value.trim().toUpperCase() || 'O',
-          stopName: '',
-        },
-        busB: {
-          co: $(`profileCoB${i}`).value.trim().toUpperCase() || 'KMB',
-          route: $(`profileRouteB${i}`).value.trim().toUpperCase(),
-          stopId: $(`profileStopB${i}`).value.trim(),
-          serviceType: $(`profileSvcB${i}`).value.trim() || '1',
-          bound: $(`profileBoundB${i}`).value.trim().toUpperCase() || 'I',
-          stopName: '',
-        },
+        name: $('profileNameInput').value.trim() || DEFAULT_PROFILE_NAMES[uiProfileIndex] || `P${uiProfileIndex + 1}`,
+        busA: snapshotBus('A'),
+        busB: snapshotBus('B'),
       };
     }
 
-    function writeProfileSlotToUi(i, slot) {
-      if (!slot) return;
-      $(`profileName${i}`).value = slot.name || `P${i + 1}`;
-      $(`profileCoA${i}`).value = slot.busA?.co || 'KMB';
-      $(`profileRouteA${i}`).value = slot.busA?.route || '';
-      $(`profileStopA${i}`).value = slot.busA?.stopId || '';
-      $(`profileSvcA${i}`).value = slot.busA?.serviceType || '1';
-      $(`profileBoundA${i}`).value = slot.busA?.bound || 'O';
-      $(`profileCoB${i}`).value = slot.busB?.co || 'KMB';
-      $(`profileRouteB${i}`).value = slot.busB?.route || '';
-      $(`profileStopB${i}`).value = slot.busB?.stopId || '';
-      $(`profileSvcB${i}`).value = slot.busB?.serviceType || '1';
-      $(`profileBoundB${i}`).value = slot.busB?.bound || 'I';
-      const summary = `${slot.name || `P${i + 1}`} · ${slot.busA?.route || '?'}/${slot.busB?.route || '?'}`;
-      const el = $(`profileSummary${i}`);
-      if (el) el.textContent = `— ${summary}`;
+    function saveCurrentProfileToDb() {
+      const db = loadDb();
+      if (!db.profiles) db.profiles = defaultProfiles();
+      db.profiles[uiProfileIndex] = readCurrentProfileFromPicker();
+      const ap = db.activeProfile ?? 0;
+      if (uiProfileIndex === ap) {
+        db.busA = { ...db.profiles[ap].busA };
+        db.busB = { ...db.profiles[ap].busB };
+      }
+      saveDb(db);
+      updateProfileTabLabels(db.profiles);
+      return db;
     }
 
     function readAllProfilesFromUi() {
-      return Array.from({ length: PROFILE_COUNT }, (_, i) => readProfileSlotFromUi(i));
+      const db = saveCurrentProfileToDb();
+      return db.profiles.slice(0, PROFILE_COUNT);
     }
 
-    function writeAllProfilesToUi(profiles, activeProfile = 0) {
-      profiles.forEach((slot, i) => writeProfileSlotToUi(i, slot));
-      updateProfileActiveBadge(activeProfile, profiles[activeProfile]?.name);
+    async function writeProfileToPicker(slot) {
+      if (!slot) return;
+      $('profileNameInput').value = slot.name || '';
+      if (slot.busA?.co) $('coSelectA').value = slot.busA.co;
+      if (slot.busB?.co) $('coSelectB').value = slot.busB.co;
+      populateRouteDatalist('');
+      populateRouteDatalist('B');
+
+      if (slot.busA?.route) {
+        await applyRouteSelection(slot.busA.route, {
+          bound: slot.busA.bound || 'O',
+          serviceType: slot.busA.serviceType || '1',
+          stopId: slot.busA.stopId || '',
+        });
+      } else {
+        $('routeInput').value = '';
+        $('variantSelect').disabled = true;
+        $('variantSelect').innerHTML = '<option value="">請先選擇路線</option>';
+        resetStops('');
+      }
+
+      if (slot.busB?.route) {
+        await applyRouteSelection(slot.busB.route, {
+          bound: slot.busB.bound || 'I',
+          serviceType: slot.busB.serviceType || '1',
+          stopId: slot.busB.stopId || '',
+        }, 'B');
+      } else {
+        $('routeInputB').value = '';
+        $('variantSelectB').disabled = true;
+        $('variantSelectB').innerHTML = '<option value="">請先選擇路線</option>';
+        resetStops('B');
+      }
+    }
+
+    function updateProfileTabLabels(profiles = null) {
+      const db = profiles ? { profiles } : loadDb();
+      for (let i = 0; i < PROFILE_COUNT; i++) {
+        const btn = $(`profileTab${i}`);
+        if (!btn) continue;
+        const slot = i === uiProfileIndex ? readCurrentProfileFromPicker() : db.profiles[i];
+        const name = slot?.name || DEFAULT_PROFILE_NAMES[i] || `P${i + 1}`;
+        const routes = `${slot?.busA?.route || '?'}/${slot?.busB?.route || '?'}`;
+        btn.textContent = name.length > 8 ? `${name.slice(0, 7)}…` : name;
+        btn.title = `P${i + 1}: ${name} · ${routes}`;
+        const active = i === uiProfileIndex;
+        btn.className = active
+          ? 'profile-tab flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition bg-amber-600 text-white'
+          : 'profile-tab flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition text-slate-400 hover:text-white hover:bg-slate-800';
+      }
     }
 
     function updateProfileActiveBadge(activeProfile = 0, name = '') {
       const label = name ? `P${activeProfile + 1}: ${name}` : `P${activeProfile + 1}`;
-      $('profileActiveBadge').textContent = `M5：${label}`;
+      const el = $('profileActiveBadge');
+      if (el) el.textContent = `M5：${label}`;
     }
 
-    function initProfileSlotsUi() {
-      $('profileSlots').innerHTML = Array.from({ length: PROFILE_COUNT }, (_, i) => profileSlotMarkup(i)).join('');
+    async function switchUiProfile(index) {
+      if (index < 0 || index >= PROFILE_COUNT || index === uiProfileIndex) return;
+      saveCurrentProfileToDb();
+      uiProfileIndex = index;
+      const token = ++profileSwitchToken;
       const db = loadDb();
-      writeAllProfilesToUi(db.profiles, db.activeProfile ?? 0);
-      $('profileSlots').querySelectorAll('[data-profile-save]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const idx = Number(btn.dataset.profileSave);
-          try {
-            await saveProfileSlotToM5(idx);
-          } catch (e) {
-            log(`儲存 Profile 失敗：${e.message}`, 'err');
-          }
-        });
-      });
-      $('profileSlots').querySelectorAll('[data-profile-activate]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const idx = Number(btn.dataset.profileActivate);
-          try {
-            await activateProfileOnM5(idx);
-          } catch (e) {
-            log(`切換 Profile 失敗：${e.message}`, 'err');
-          }
-        });
-      });
-      $('profileSlots').querySelectorAll('[data-profile-reset]').forEach((btn) => {
+      await writeProfileToPicker(db.profiles[index]);
+      if (token !== profileSwitchToken) return;
+      updateProfileTabLabels(db.profiles);
+      log(`已切換至 Profile ${index + 1}（${db.profiles[index]?.name || `P${index + 1}`}）`, 'info');
+    }
+
+    function initProfileTabsUi() {
+      const db = loadDb();
+      uiProfileIndex = db.activeProfile ?? 0;
+      updateProfileActiveBadge(uiProfileIndex, db.profiles[uiProfileIndex]?.name);
+      updateProfileTabLabels(db.profiles);
+      $('profileTabNav').querySelectorAll('[data-profile-tab]').forEach((btn) => {
         btn.addEventListener('click', () => {
-          const idx = Number(btn.dataset.profileReset);
-          const slot = defaultProfileSlot(idx, idx === 0);
-          writeProfileSlotToUi(idx, slot);
-          const db = loadDb();
-          db.profiles[idx] = slot;
-          saveDb(db);
-          log(`Profile ${idx + 1} 已重設`, 'warn');
+          const idx = Number(btn.dataset.profileTab);
+          switchUiProfile(idx).catch((e) => log(`Profile 切換失敗：${e.message}`, 'err'));
         });
       });
-      $('profileSlots').querySelectorAll('input').forEach((el) => {
-        el.addEventListener('input', () => {
-          const db = loadDb();
-          db.profiles = readAllProfilesFromUi();
-          saveDb(db);
-          db.profiles.forEach((slot, i) => {
-            const summary = `${slot.name} · ${slot.busA.route || '?'}/${slot.busB.route || '?'}`;
-            const sumEl = $(`profileSummary${i}`);
-            if (sumEl) sumEl.textContent = `— ${summary}`;
-          });
-        });
+      $('profileNameInput').addEventListener('input', () => {
+        schedulePersistDb();
+        updateProfileTabLabels();
+      });
+      $('btnProfileReset').addEventListener('click', async () => {
+        const slot = defaultProfileSlot(uiProfileIndex, uiProfileIndex === 0);
+        await writeProfileToPicker(slot);
+        const db = loadDb();
+        db.profiles[uiProfileIndex] = slot;
+        saveDb(db);
+        updateProfileTabLabels(db.profiles);
+        log(`Profile ${uiProfileIndex + 1} 已重設`, 'warn');
+      });
+      $('btnProfileActivate').addEventListener('click', async () => {
+        try {
+          saveCurrentProfileToDb();
+          await activateProfileOnM5(uiProfileIndex);
+        } catch (e) {
+          log(`切換 Profile 失敗：${e.message}`, 'err');
+        }
       });
     }
 
@@ -677,40 +686,28 @@
 
     async function sendProfilesToM5(activeProfile = null) {
       if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
+      const profiles = readAllProfilesFromUi();
+      const db = loadDb();
+      const active = activeProfile != null ? activeProfile : (db.activeProfile ?? 0);
+      const activeSlot = profiles[active] || profiles[0];
+      if (!activeSlot?.busA?.route || !activeSlot?.busA?.stopId) {
+        throw new Error(`Profile ${active + 1} 左欄路線或車站未設定`);
+      }
+      if (!activeSlot?.busB?.route || !activeSlot?.busB?.stopId) {
+        throw new Error(`Profile ${active + 1} 右欄路線或車站未設定`);
+      }
       const payload = JSON.stringify(buildProfilesPayload(activeProfile));
       const meta = buildAckMeta();
       await sendPayloadToM5(payload, meta);
-      const db = loadDb();
-      db.profiles = readAllProfilesFromUi();
+      db.profiles = profiles;
       if (activeProfile != null) db.activeProfile = activeProfile;
       db.busA = db.profiles[db.activeProfile]?.busA || db.busA;
       db.busB = db.profiles[db.activeProfile]?.busB || db.busB;
       saveDb(db);
+      pushHistory(db);
       log('4-Profile 設定已發送到 M5', 'ok');
-    }
-
-    async function saveProfileSlotToM5(index) {
-      if (!isTransportConnected()) throw new Error('請先連線雲端 Config');
-      const profiles = readAllProfilesFromUi();
-      const slot = profiles[index];
-      const payload = JSON.stringify({
-        v: 2,
-        profile_id: index,
-        name: slot.name,
-        busA: busToFirmware(slot.busA),
-        busB: busToFirmware(slot.busB),
-        profiles: profiles.map((p, i) => ({
-          id: i,
-          name: p.name,
-          busA: busToFirmware(p.busA),
-          busB: busToFirmware(p.busB),
-        })),
-      });
-      await sendPayloadToM5(payload, buildAckMeta());
-      const db = loadDb();
-      db.profiles = profiles;
-      saveDb(db);
-      log(`Profile ${index + 1}（${slot.name}）已儲存到 M5`, 'ok');
+      $('lastPayload').textContent = `→ Profile Config JSON (${payload.length} bytes)`;
+      $('lastPayload').classList.remove('hidden');
     }
 
     async function activateProfileOnM5(index) {
@@ -736,6 +733,9 @@
       db.profiles = profiles;
       db.activeProfile = index;
       saveDb(db);
+      uiProfileIndex = index;
+      updateProfileTabLabels(db.profiles);
+      await writeProfileToPicker(db.profiles[index]);
       updateProfileActiveBadge(index, profiles[index]?.name);
       log(`已切換 M5 至 Profile ${index + 1}（${profiles[index]?.name}）`, 'ok');
     }
@@ -744,21 +744,20 @@
       const suffix = side === 'B' ? 'B' : '';
       const variant = side === 'B' ? getSelectedVariantB() : getSelectedVariant();
       const stopSelect = $('stopSelect' + suffix);
+      const opt = stopSelect.selectedOptions[0];
+      const stopLabel = opt?.textContent?.replace(/^\d+\.\s*/, '').trim() || '';
       return {
         co: getCo(side === 'B' ? 'B' : 'A'),
         route: side === 'B' ? getRouteB() : getRoute(),
         stopId: stopSelect.value.trim(),
-        bound: variant?.bound || 'O',
+        bound: variant?.bound || (side === 'B' ? 'I' : 'O'),
         serviceType: variant?.service_type || '1',
-        stopName: compactDirLabel(variant?.dest_tc || ''),
-        variantLabel: variant ? `${variant.orig_tc} → ${variant.dest_tc}（服務 ${variant.service_type}）` : '',
+        stopName: stopLabel || compactDirLabel(variant?.dest_tc || ''),
       };
     }
 
     function persistDbFromUi() {
-      const db = loadDb();
-      db.busA = snapshotBus('A');
-      db.busB = snapshotBus('B');
+      const db = saveCurrentProfileToDb();
       db.config = { ...db.config, ...settingsToDbConfig(getSettingsFromUi()) };
       saveDb(db);
     }
@@ -1211,15 +1210,15 @@
         db.activeProfile = Number(msg.active_profile);
         if (Array.isArray(msg.profiles) && msg.profiles.length) {
           db.profiles = msg.profiles.map((p, i) => ({
-            name: p.name || `P${i + 1}`,
+            name: p.name || DEFAULT_PROFILE_NAMES[i] || `P${i + 1}`,
             busA: busFromFirmware(p.busA),
             busB: busFromFirmware(p.busB),
           }));
-          writeAllProfilesToUi(db.profiles, db.activeProfile);
-        } else {
-          updateProfileActiveBadge(db.activeProfile, msg.profile_name || '');
         }
         saveDb(db);
+        updateProfileActiveBadge(db.activeProfile, db.profiles[db.activeProfile]?.name || msg.profile_name || '');
+        updateProfileTabLabels(db.profiles);
+        writeProfileToPicker(db.profiles[uiProfileIndex]).catch(() => {});
       }
     }
 
@@ -1256,10 +1255,7 @@
       $('btnExitRssi').disabled = !connected;
       $('btnRadarUseM5Wifi').disabled = !connected;
       $('btnRadarScanWifi').disabled = !connected;
-      $('btnSendProfiles').disabled = !connected;
-      $('profileSlots')?.querySelectorAll('[data-profile-save],[data-profile-activate]').forEach((btn) => {
-        btn.disabled = !connected;
-      });
+      $('btnProfileActivate').disabled = !connected;
       $('btnSendWifi').disabled = !connected;
       $('autoSync').disabled = !connected;
       $('btnRefreshEta').disabled = !connected;
@@ -1862,8 +1858,6 @@
     }
 
     function buildConfigJson() {
-      const variant = getSelectedVariant();
-      const variantB = getSelectedVariantB();
       const settings = getSettingsFromUi();
       const profiles = readAllProfilesFromUi();
       const db = loadDb();
@@ -1878,22 +1872,8 @@
           busA: busToFirmware(p.busA),
           busB: busToFirmware(p.busB),
         })),
-        busA: {
-          co: getCo('A'),
-          route: getRoute(),
-          stop: getStopId(),
-          svc: getServiceType(),
-          bound: variant?.bound || 'O',
-          name: compactDirLabel(variant?.dest_tc || ''),
-        },
-        busB: {
-          co: getCo('B'),
-          route: getRouteB() || getRoute(),
-          stop: getStopIdB(),
-          svc: getServiceTypeB(),
-          bound: variantB?.bound || 'I',
-          name: compactDirLabel(variantB?.dest_tc || ''),
-        },
+        busA: busToFirmware(activeSlot.busA),
+        busB: busToFirmware(activeSlot.busB),
         settings: {
           ...settings,
           wifi: getWifiFromUi(),
@@ -1934,52 +1914,23 @@
     }
 
     async function sendToM5() {
-      const routeA = getRoute();
-      const stopA = getStopId();
-      const routeB = ($('routeInputB').value.trim().toUpperCase()) || routeA;
-      const stopB = $('stopSelectB').value.trim();
-      const variant = getSelectedVariant();
-      const variantB = getSelectedVariantB();
-      if (!routeA) throw new Error('請輸入左欄路線');
-      if (!variant) throw new Error('請選擇左欄方向 / 服務班次');
-      if (!stopA) throw new Error('請選擇左欄車站');
-      if (!stopB) throw new Error('請選擇右欄車站');
+      const profiles = readAllProfilesFromUi();
+      const db = loadDb();
+      const ap = db.activeProfile ?? 0;
+      const slot = profiles[ap];
+      if (!slot?.busA?.route) throw new Error('請輸入左欄路線');
+      if (!slot?.busA?.stopId) throw new Error('請選擇左欄車站');
+      if (!slot?.busB?.stopId) throw new Error('請選擇右欄車站');
       if (!isTransportConnected()) {
         throw new Error('請先連線雲端 Config');
       }
 
-      const dirA = compactDirLabel(variant.dest_tc || '');
-      const dirB = compactDirLabel(variantB?.dest_tc || '');
-      const stopLabelA = $('stopSelect').selectedOptions[0]?.textContent || stopA;
-      const stopLabelB = $('stopSelectB').selectedOptions[0]?.textContent || stopB;
       const settings = getSettingsFromUi();
-      log(`設定左欄 ${routeA} → ${dirA || '—'} · ${stopLabelA}`);
-      log(`設定右欄 ${routeB} → ${dirB || '—'} · ${stopLabelB}`);
+      log(`Profile ${ap + 1}（${slot.name}）：${slot.busA.route} / ${slot.busB.route}`);
       log(`裝置：亮度 ${['25%','50%','75%','100%'][settings.bright] || settings.bright} · 逾時 ${['15s','30s','60s','永不'][settings.timeout] || settings.timeout} · ${settings.english ? 'EN' : '中文'} · ${DISPLAY_MODE_LABELS[settings.display_mode] || settings.display_mode}`);
 
-      const payload = buildConfigJson();
-      const meta = buildAckMeta();
-
-      await sendPayloadToM5(payload, meta);
-
-      const db = loadDb();
-      db.busA = snapshotBus('A');
-      db.busB = snapshotBus('B');
-      const ap = db.activeProfile ?? 0;
-      if (!db.profiles) db.profiles = defaultProfiles();
-      db.profiles[ap] = {
-        ...db.profiles[ap],
-        busA: db.busA,
-        busB: db.busB,
-      };
-      db.config = { ...db.config, ...settingsToDbConfig(settings) };
-      pushHistory(db);
-      saveDb(db);
-      log('已儲存設定至本機 DB', 'ok');
-
-      $('lastPayload').textContent = `→ Cloud Config JSON (${payload.length} bytes)`;
-      $('lastPayload').classList.remove('hidden');
-      return payload;
+      await sendProfilesToM5();
+      return buildConfigJson();
     }
 
     async function sendWifiOnly() {
@@ -2092,11 +2043,13 @@
     $('variantSelect').addEventListener('change', () => {
       loadStopsForVariant(getSelectedVariant()).catch((e) => log(`車站載入失敗：${e.message}`, 'err'));
       schedulePersistDb();
+      updateProfileTabLabels();
     });
 
     $('stopSelect').addEventListener('change', () => {
       updateStopMeta();
       schedulePersistDb();
+      updateProfileTabLabels();
     });
 
     let routeInputBTimer = null;
@@ -2112,10 +2065,12 @@
     $('variantSelectB').addEventListener('change', () => {
       loadStopsForVariant(getSelectedVariantB(), '', 'B').catch((e) => log(`右欄車站載入失敗：${e.message}`, 'err'));
       schedulePersistDb();
+      updateProfileTabLabels();
     });
     $('stopSelectB').addEventListener('change', () => {
       updateStopMeta('B');
       schedulePersistDb();
+      updateProfileTabLabels();
     });
 
     $('btnRefreshRoutes').addEventListener('click', async () => {
@@ -2144,16 +2099,11 @@
 
     function switchAppTab(tab) {
       const isBus = tab === 'bus';
-      const isProfiles = tab === 'profiles';
       const isRadar = tab === 'radar';
       $('panelBus').classList.toggle('hidden', !isBus);
-      $('panelProfiles').classList.toggle('hidden', !isProfiles);
       $('panelRadar').classList.toggle('hidden', !isRadar);
       $('tabBus').className = isBus
         ? 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-emerald-600 text-white'
-        : 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white';
-      $('tabProfiles').className = isProfiles
-        ? 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-amber-600 text-white'
         : 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition text-slate-400 hover:text-white';
       $('tabRadar').className = isRadar
         ? 'tab-btn flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition bg-cyan-600 text-white'
@@ -2161,16 +2111,7 @@
     }
 
     $('tabBus').addEventListener('click', () => switchAppTab('bus'));
-    $('tabProfiles').addEventListener('click', () => switchAppTab('profiles'));
     $('tabRadar').addEventListener('click', () => switchAppTab('radar'));
-
-    $('btnSendProfiles').addEventListener('click', async () => {
-      try {
-        await sendProfilesToM5();
-      } catch (e) {
-        log(`Profiles 發送失敗：${e.message}`, 'err');
-      }
-    });
 
     $('btnSendRadar').addEventListener('click', async () => {
       try {
@@ -2326,7 +2267,7 @@
     const savedId = localStorage.getItem(DEVICE_ID_KEY) || '';
     if (savedId) $('deviceId').value = savedId;
     updateSendControls();
-    initProfileSlotsUi();
+    initProfileTabsUi();
     log('架構：雲端 Config · M5 直連九巴／城巴 ETA · NVS db_json 離線保護', 'info');
     log('請在 M5 選單 → 關於 查看 Device ID，再連線雲端 Config', 'info');
 
@@ -2352,21 +2293,14 @@
       applyRadarToUi({ ssid: db.config.radarSsid, mac: db.config.radarMac });
       toggleRadarCustomFields();
       applyAppModeToUi(db.config.appMode || 'bus');
-      if (db.busA?.co) $('coSelectA').value = db.busA.co;
-      if (db.busB?.co) $('coSelectB').value = db.busB.co;
+      const ap = db.activeProfile ?? 0;
+      uiProfileIndex = ap;
       const ok = await loadAllRoutes();
       if (ok) {
-        await applyRouteSelection(db.busA.route || DEFAULT_ROUTE, {
-          bound: db.busA.bound || 'O',
-          serviceType: db.busA.serviceType || '1',
-          stopId: db.busA.stopId || DEFAULT_STOP_ID_A,
-        });
-        await applyRouteSelection(db.busB.route || DEFAULT_ROUTE, {
-          bound: db.busB.bound || 'I',
-          serviceType: db.busB.serviceType || '1',
-          stopId: db.busB.stopId || DEFAULT_STOP_ID_B,
-        }, 'B');
-        log('已從本機 DB 還原車站設定', 'ok');
+        await writeProfileToPicker(db.profiles[ap] || defaultProfileSlot(ap, ap === 0));
+        updateProfileTabLabels(db.profiles);
+        updateProfileActiveBadge(ap, db.profiles[ap]?.name);
+        log('已從本機 DB 還原 4-Profile 車站設定', 'ok');
       }
     })();
   </script>
