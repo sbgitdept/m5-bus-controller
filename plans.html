@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>M5StickS3 全棧微服務模組化執行計劃書 v6.0</title>
+  <style>
+    :root { --bg:#f8fafc; --card:#fff; --primary:#2563eb; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --code:#0f172a; }
+    body { font-family: "PingFang HK","Microsoft JhengHei",system-ui,sans-serif; background:var(--bg); color:var(--text); margin:0; padding:24px; line-height:1.6; font-size:15px; }
+    .container { max-width:960px; margin:0 auto; }
+    .header { background:linear-gradient(135deg,#0f172a,#1e3a8a); color:#fff; padding:28px 32px; border-radius:12px; margin-bottom:24px; }
+    .badge { display:inline-block; background:var(--primary); font-size:12px; padding:4px 10px; border-radius:6px; font-weight:700; margin-bottom:12px; }
+    .header h1 { margin:0 0 8px; font-size:26px; }
+    .subtitle { color:#93c5fd; font-size:14px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:20px; }
+    h2 { font-size:18px; border-left:4px solid var(--primary); padding-left:10px; margin:0 0 16px; }
+    table { width:100%; border-collapse:collapse; font-size:13.5px; margin-bottom:16px; }
+    th { background:#f1f5f9; text-align:left; padding:10px 12px; border-bottom:2px solid #cbd5e1; }
+    td { padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
+    tr:nth-child(even) td { background:#f8fafc; }
+    pre { background:var(--code); color:#e2e8f0; padding:14px 16px; border-radius:8px; font-size:12.5px; overflow-x:auto; }
+    .warn { background:#fffbe3; border-left:4px solid #f59e0b; padding:12px 16px; border-radius:0 8px 8px 0; }
+    a { color:var(--primary); }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <span class="badge">SPECIFICATION v6.0</span>
+    <h1>M5StickS3 全棧微服務智能匙扣系統執行計劃書</h1>
+    <div class="subtitle">解耦模組化架構 · 全域按鍵矩陣 · 前端 ETL · 九天預報 · <a href="index.html" style="color:#bfdbfe">CRM 控制台</a></div>
+  </div>
+
+  <div class="card">
+    <h2>🏗 1. 專案架構</h2>
+    <pre>Mobile WebApp CRM (index.html)
+        │  MQTT JSON v6 (config / weather / stock / state / request)
+        ▼
+HiveMQ Broker (WSS 8884 / TCP 1883)
+        ▼
+M5StickS3 Firmware (src/main.cpp)
+  BusModule · RssiModule · StockModule · WeatherModule · Carousel · KeyEngine</pre>
+  </div>
+
+  <div class="card">
+    <h2>🕹 2. 全域按鍵矩陣 (Universal Input Map)</h2>
+    <table>
+      <thead><tr><th>動作</th><th>巴士 ETA</th><th>RSSI</th><th>股票</th><th>天氣</th><th>選單</th></tr></thead>
+      <tbody>
+        <tr><td><strong>BtnA 單擊</strong></td><td>切換 P1–P4</td><td>返回巴士</td><td>切換股票</td><td>警告 ↔ 九天</td><td>變更設定</td></tr>
+        <tr><td><strong>BtnA 長按 1.5s</strong></td><td>刷新 ETA</td><td>重測 RSSI</td><td>刷新報價</td><td>刷新天氣</td><td>儲存並退出</td></tr>
+        <tr><td><strong>BtnA ×5</strong></td><td colspan="4" style="text-align:center;font-weight:700;background:#eff6ff">全域切換模組 Bus→RSSI→Stock→Weather</td><td>—</td></tr>
+        <tr><td><strong>BtnB 單擊</strong></td><td>開啟選單</td><td>返回巴士</td><td>開啟選單</td><td>開啟選單</td><td>下一張卡</td></tr>
+        <tr><td><strong>BtnB ×5</strong></td><td colspan="5" style="text-align:center;font-weight:700;background:#fef2f2;color:#991b1b">全螢幕 WebApp 配對 QR Code</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>🌤 3. 天氣模組</h2>
+    <p>強制豎屏 135×240。檢視 1：即時溫度、濕度、天文台警告色塊。檢視 2：九天預報條列（日期、溫度、PSR）。底部提示：<code>A:九天 B:選單</code> / <code>A:即時 B:選單</code>。</p>
+  </div>
+
+  <div class="card">
+    <h2>🗄 4. JSON Schema v6.0</h2>
+    <pre>{
+  "v": 6,
+  "active_module": "bus",
+  "settings": { "bright": 2, "timeout": 1, "english": false, "wifi": {...} },
+  "modules": {
+    "bus": { "active_profile": 0, "profiles": [...] },
+    "rssi": { "radar_ssid": "DH", "radar_mac": "" },
+    "stock": { "active_stock": 0, "watchlist": [...] }
+  }
+}</pre>
+    <p>天氣與股票報價經獨立 topic：<code>/weather</code>、<code>/stock</code>（retain: false）。</p>
+  </div>
+
+  <div class="card">
+    <h2>🛡 5. 五大 Bug 防禦</h2>
+    <div class="warn"><ol>
+      <li>POSIX <code>difftime</code> 跨日 ETA 計算</li>
+      <li>MQTT config/state/weather/stock 一律 <code>retain: false</code></li>
+      <li>ETL 站名後綴正則（≤5 中文字）</li>
+      <li>靜態 JsonDocument + 4096B MQTT buffer</li>
+      <li>Carousel / 豎屏模組停用 IMU 四向旋轉</li>
+    </ol></div>
+  </div>
+
+  <div class="card">
+    <h2>📱 6. Web CRM 配合要點</h2>
+    <ul>
+      <li>URL 自動配對 <code>?id=&lt;DeviceID&gt;</code></li>
+      <li>KMB/CTB 路線同步 + 站點 ID 選擇</li>
+      <li>WiFi / 亮度 / 語言 / RSSI 設定推送</li>
+      <li>HKO rhrread + fnd → <code>/weather</code></li>
+      <li>Yahoo Finance → <code>/stock</code></li>
+      <li>訂閱 <code>/request</code>：裝置長按或開機請求自動回應</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>

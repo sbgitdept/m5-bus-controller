@@ -119,7 +119,7 @@
   <div class="header">
     <div>
       <h1>📱 <span data-i18n="title">M5 匙扣 CRM 控制台</span></h1>
-      <p class="header-sub" data-i18n="subtitle">v6.0 · 巴士 · RSSI · 股票 · 天氣</p>
+      <p class="header-sub" data-i18n="subtitle">v6.0 · 巴士 · RSSI · 股票 · 天氣 · <a href="plans.html" style="color:#67e8f9">計劃書</a></p>
     </div>
     <div class="header-badges">
       <button class="lang-pill" id="langBtn" type="button">繁體中文 / EN</button>
@@ -416,19 +416,34 @@ function saveDb(db) { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 
 function busFw(b) { return {co:b.co||'KMB',route:b.route||'',stop:b.stopId||b.stop||'',svc:b.svc||b.serviceType||'1',bound:b.bound||'O',name:translateAndShortenName(b.stopName||b.name||'')}; }
 
-function buildConfigPayload() {
+function buildConfigPayload(activeModule) {
+  saveProfileToDb();
   const db = loadDb();
-  const p = db.profiles[uiProfile] || db.profiles[0];
+  const profileRows = db.profiles.map((pr, i) => ({
+    id: i, name: pr.name, busA: busFw(pr.busA), busB: busFw(pr.busB)
+  }));
   return {
-    v:6, active_profile: db.activeProfile??0, active_stock:0,
-    profiles: db.profiles.map((pr,i) => ({id:i,name:pr.name,busA:busFw(pr.busA),busB:busFw(pr.busB)})),
-    busA:busFw(p.busA), busB:busFw(p.busB),
-    settings:{
-      bright:Number($('bright').value), timeout:Number($('timeout').value),
-      english:$('m5lang').value==='1', app_mode:$('appMode').value,
-      wifi:{ssid:$('wifiSsid').value.trim(),password:$('wifiPass').value},
-      radar:{ssid:$('radarSsid').value.trim(),mac:$('radarMac').value.trim().toUpperCase()},
+    v: 6,
+    active_module: module,
+    active_profile: db.activeProfile ?? 0,
+    active_stock: 0,
+    profiles: profileRows,
+    settings: {
+      bright: Number($('bright').value),
+      timeout: Number($('timeout').value),
+      english: $('m5lang').value === '1',
+      app_mode: $('appMode').value,
+      wifi: { ssid: $('wifiSsid').value.trim(), password: $('wifiPass').value },
+      radar: { ssid: $('radarSsid').value.trim(), mac: $('radarMac').value.trim().toUpperCase() },
       stocks: db.stocks
+    },
+    modules: {
+      bus: { active_profile: db.activeProfile ?? 0, profiles: profileRows },
+      rssi: {
+        radar_ssid: $('radarSsid').value.trim(),
+        radar_mac: $('radarMac').value.trim().toUpperCase()
+      },
+      stock: { active_stock: 0, watchlist: db.stocks }
     }
   };
 }
@@ -480,6 +495,7 @@ function connect() {
         const msg = JSON.parse(buf.toString());
         if (msg.type === 'weather') pushWeather().catch(e => log(e.message, 'err'));
         if (msg.type === 'stock') pushStock().catch(e => log(e.message, 'err'));
+        if (msg.type === 'config') pubConfig().then(() => log(lang==='en'?'Config pushed (boot request)':'已回應開機設定請求','ok')).catch(e => log(e.message, 'err'));
       } catch {}
       return;
     }
@@ -517,9 +533,9 @@ function connect() {
   mqttClient.on('error', e => log(e.message,'err'));
 }
 
-function pubConfig() {
+function pubConfig(activeModule) {
   return new Promise((res,rej) => {
-    const payload = JSON.stringify(buildConfigPayload());
+    const payload = JSON.stringify(buildConfigPayload(activeModule));
     mqttClient.publish(topic('config'), payload, {qos:0, retain:false}, e => e?rej(e):res());
   });
 }
@@ -750,8 +766,8 @@ function bindEvents() {
     $(s==='B'?'routeB':'routeA').onchange = async () => { populateVariants(getRoute(s),s); await loadStops(s); };
     $(s==='B'?'variantB':'variantA').onchange = () => loadStops(s);
   });
-  $('btnSendBus').onclick = async () => { saveProfileToDb(); try{await pubConfig();log(lang==='en'?'Bus config sent':'巴士設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
-  $('btnSendRssi').onclick = async () => { try{await pubConfig();log(lang==='en'?'RSSI config sent':'RSSI 設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendBus').onclick = async () => { saveProfileToDb(); try{await pubConfig('bus');log(lang==='en'?'Bus config sent':'巴士設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
+  $('btnSendRssi').onclick = async () => { try{await pubConfig('rssi');log(lang==='en'?'RSSI config sent':'RSSI 設定已發送','ok');toast(lang==='en'?'Sent':'🚀 已發送','ok');}catch(e){log(e.message,'err');} };
   $('btnSendWifi').onclick = async () => {
     const db = loadDb();
     db.config.wifiSsid = $('wifiSsid').value.trim();
@@ -761,7 +777,12 @@ function bindEvents() {
   };
   $('btnSendSettings').onclick = async () => { try{await pubConfig();log(lang==='en'?'Settings sent':'設定已發送','ok');toast(lang==='en'?'Saved':'💾 已儲存','ok');}catch(e){log(e.message,'err');} };
   $('btnFetchWeather').onclick = () => pushWeather().catch(e=>{log(e.message,'err');toast(e.message,'err');});
-  $('btnFetchStock').onclick = () => pushStock().catch(e=>{log(e.message,'err');toast(e.message,'err');});
+  $('btnFetchStock').onclick = async () => {
+    try {
+      await pubConfig('stock');
+      await pushStock();
+    } catch(e) { log(e.message,'err'); toast(e.message,'err'); }
+  };
   $('weatherAuto').onchange = startAutoSync;
   $('stockAuto').onchange = startAutoSync;
   $('btnRefreshEta').onclick = () => pubCmd('refresh_eta').then(()=>log(lang==='en'?'ETA refresh':'ETA 已刷新','ok')).catch(e=>log(e.message,'err'));

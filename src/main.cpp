@@ -147,8 +147,12 @@ static int g_carouselIdx = 0;
 static bool g_weatherForecastView = false;
 static int g_imuRotation = 0;
 static int g_radarRssi = -127, g_radarPct = 0, g_radarCh = 0;
+static uint32_t g_lastRssiScan = 0;
 static uint32_t g_lastActivity = 0, g_lastEta = 0, g_lastState = 0;
 static bool g_bootTasksDone = false;
+static uint8_t g_etaStep = 0;
+static uint32_t g_wifiTryMs = 0;
+static bool g_ntpDone = false;
 static bool g_mqttOk = false;
 static char g_lastAction[20] = "";
 static uint32_t g_lastActionSeq = 0;
@@ -249,20 +253,48 @@ static void updateImu4Way(bool enabled) {
 static void saveNvs() {
     g_jsonDoc.clear();
     g_jsonDoc["v"] = 6;
+    g_jsonDoc["active_module"] = modeStr(g_cfg.appMode);
     g_jsonDoc["active_profile"] = g_activeProfile;
     g_jsonDoc["active_stock"] = g_cfg.activeStock;
-    JsonArray profiles = g_jsonDoc["profiles"].to<JsonArray>();
-    for (int i = 0; i < PROFILE_COUNT; ++i) {
-        JsonObject p = profiles.add<JsonObject>();
-        p["name"] = g_profiles[i].name;
+
+    auto writeBusProfile = [](JsonObject p, const BusProfile& pr) {
+        p["name"] = pr.name;
         auto wb = [&](const char* k, const BusStopCfg& b) {
             JsonObject o = p[k].to<JsonObject>();
             o["co"] = b.co; o["route"] = b.route; o["stop"] = b.stop;
             o["svc"] = b.svc; o["bound"] = b.bound; o["name"] = b.name;
         };
-        wb("busA", g_profiles[i].busA);
-        wb("busB", g_profiles[i].busB);
+        wb("busA", pr.busA);
+        wb("busB", pr.busB);
+    };
+
+    JsonArray profiles = g_jsonDoc["profiles"].to<JsonArray>();
+    for (int i = 0; i < PROFILE_COUNT; ++i) {
+        JsonObject p = profiles.add<JsonObject>();
+        writeBusProfile(p, g_profiles[i]);
     }
+
+    JsonObject mods = g_jsonDoc["modules"].to<JsonObject>();
+    JsonObject bus = mods["bus"].to<JsonObject>();
+    bus["active_profile"] = g_activeProfile;
+    JsonArray busProfiles = bus["profiles"].to<JsonArray>();
+    for (int i = 0; i < PROFILE_COUNT; ++i) {
+        JsonObject p = busProfiles.add<JsonObject>();
+        p["id"] = i;
+        writeBusProfile(p, g_profiles[i]);
+    }
+    JsonObject rssi = mods["rssi"].to<JsonObject>();
+    rssi["radar_ssid"] = g_cfg.radar.ssid;
+    rssi["radar_mac"] = g_cfg.radar.mac;
+    JsonObject stock = mods["stock"].to<JsonObject>();
+    stock["active_stock"] = g_cfg.activeStock;
+    JsonArray watchlist = stock["watchlist"].to<JsonArray>();
+    for (int i = 0; i < STOCK_SLOTS; ++i) {
+        JsonObject st = watchlist.add<JsonObject>();
+        st["symbol"] = g_cfg.stocks[i].symbol;
+        st["name"] = g_cfg.stocks[i].name;
+    }
+
     JsonObject s = g_jsonDoc["settings"].to<JsonObject>();
     s["bright"] = g_cfg.bright;
     s["timeout"] = g_cfg.timeout;
@@ -287,28 +319,72 @@ static void readBus(JsonObjectConst o, BusStopCfg& b) {
     if (o["co"].is<const char*>()) strlcpy(b.co, o["co"], sizeof(b.co));
     if (o["route"].is<const char*>()) strlcpy(b.route, o["route"], sizeof(b.route));
     if (o["stop"].is<const char*>()) strlcpy(b.stop, o["stop"], sizeof(b.stop));
+    if (o["stop_id"].is<const char*>()) strlcpy(b.stop, o["stop_id"], sizeof(b.stop));
     if (o["svc"].is<const char*>()) strlcpy(b.svc, o["svc"], sizeof(b.svc));
     if (o["bound"].is<const char*>()) strlcpy(b.bound, o["bound"], sizeof(b.bound));
     if (o["name"].is<const char*>()) strlcpy(b.name, o["name"], sizeof(b.name));
 }
 
+static void applyBusProfiles(JsonArrayConst arr) {
+    int i = 0;
+    for (JsonObjectConst p : arr) {
+        if (i >= PROFILE_COUNT) break;
+        if (p["name"].is<const char*>()) strlcpy(g_profiles[i].name, p["name"], sizeof(g_profiles[i].name));
+        if (p["busA"].is<JsonObjectConst>()) readBus(p["busA"], g_profiles[i].busA);
+        if (p["busB"].is<JsonObjectConst>()) readBus(p["busB"], g_profiles[i].busB);
+        ++i;
+    }
+}
+
+static void applyWatchlist(JsonArrayConst arr) {
+    int i = 0;
+    for (JsonObjectConst x : arr) {
+        if (i >= STOCK_SLOTS) break;
+        if (x["symbol"].is<const char*>()) strlcpy(g_cfg.stocks[i].symbol, x["symbol"], sizeof(g_cfg.stocks[i].symbol));
+        if (x["name"].is<const char*>()) strlcpy(g_cfg.stocks[i].name, x["name"], sizeof(g_cfg.stocks[i].name));
+        ++i;
+    }
+}
+
 static void applyConfig(const char* json, size_t len) {
     g_jsonDoc.clear();
     if (deserializeJson(g_jsonDoc, json, len)) return;
+
+    const char* activeMod = g_jsonDoc["active_module"] | nullptr;
+    if (activeMod) g_cfg.appMode = modeFrom(activeMod);
+
     if (g_jsonDoc["active_profile"].is<int>()) g_activeProfile = g_jsonDoc["active_profile"];
     if (g_jsonDoc["active_stock"].is<int>()) g_cfg.activeStock = g_jsonDoc["active_stock"];
-    if (g_jsonDoc["profiles"].is<JsonArrayConst>()) {
-        int i = 0;
-        for (JsonObjectConst p : g_jsonDoc["profiles"].as<JsonArrayConst>()) {
-            if (i >= PROFILE_COUNT) break;
-            if (p["name"].is<const char*>()) strlcpy(g_profiles[i].name, p["name"], sizeof(g_profiles[i].name));
-            if (p["busA"].is<JsonObjectConst>()) readBus(p["busA"], g_profiles[i].busA);
-            if (p["busB"].is<JsonObjectConst>()) readBus(p["busB"], g_profiles[i].busB);
-            ++i;
+
+    if (g_jsonDoc["profiles"].is<JsonArrayConst>())
+        applyBusProfiles(g_jsonDoc["profiles"].as<JsonArrayConst>());
+
+    JsonObjectConst mods = g_jsonDoc["modules"];
+    if (!mods.isNull()) {
+        JsonObjectConst bus = mods["bus"];
+        if (!bus.isNull()) {
+            if (bus["active_profile"].is<int>()) g_activeProfile = bus["active_profile"];
+            if (bus["profiles"].is<JsonArrayConst>())
+                applyBusProfiles(bus["profiles"].as<JsonArrayConst>());
+        }
+        JsonObjectConst rssi = mods["rssi"];
+        if (!rssi.isNull()) {
+            const char* ssid = rssi["radar_ssid"] | rssi["ssid"];
+            const char* mac = rssi["radar_mac"] | rssi["mac"] | rssi["bssid"];
+            if (ssid) strlcpy(g_cfg.radar.ssid, ssid, sizeof(g_cfg.radar.ssid));
+            if (mac) strlcpy(g_cfg.radar.mac, mac, sizeof(g_cfg.radar.mac));
+        }
+        JsonObjectConst stock = mods["stock"];
+        if (!stock.isNull()) {
+            if (stock["active_stock"].is<int>()) g_cfg.activeStock = stock["active_stock"];
+            if (stock["watchlist"].is<JsonArrayConst>())
+                applyWatchlist(stock["watchlist"].as<JsonArrayConst>());
         }
     }
+
     if (g_jsonDoc["busA"].is<JsonObjectConst>()) readBus(g_jsonDoc["busA"], g_profiles[g_activeProfile].busA);
     if (g_jsonDoc["busB"].is<JsonObjectConst>()) readBus(g_jsonDoc["busB"], g_profiles[g_activeProfile].busB);
+
     JsonObjectConst st = g_jsonDoc["settings"];
     if (!st.isNull()) {
         if (st["bright"].is<int>()) g_cfg.bright = st["bright"];
@@ -320,15 +396,7 @@ static void applyConfig(const char* json, size_t len) {
         if (st["radar"]["ssid"].is<const char*>()) strlcpy(g_cfg.radar.ssid, st["radar"]["ssid"], sizeof(g_cfg.radar.ssid));
         const char* mac = st["radar"]["mac"] | st["radar"]["bssid"];
         if (mac) strlcpy(g_cfg.radar.mac, mac, sizeof(g_cfg.radar.mac));
-        if (st["stocks"].is<JsonArrayConst>()) {
-            int i = 0;
-            for (JsonObjectConst x : st["stocks"].as<JsonArrayConst>()) {
-                if (i >= STOCK_SLOTS) break;
-                if (x["symbol"].is<const char*>()) strlcpy(g_cfg.stocks[i].symbol, x["symbol"], sizeof(g_cfg.stocks[i].symbol));
-                if (x["name"].is<const char*>()) strlcpy(g_cfg.stocks[i].name, x["name"], sizeof(g_cfg.stocks[i].name));
-                ++i;
-            }
-        }
+        if (st["stocks"].is<JsonArrayConst>()) applyWatchlist(st["stocks"].as<JsonArrayConst>());
     }
     M5.Display.setBrightness(brightVal());
     saveNvs();
@@ -356,8 +424,9 @@ static void loadNvs() {
 // HTTP ETA
 // ---------------------------------------------------------------------------
 static bool httpGet(const String& url, String& out) {
+    if (WiFi.status() != WL_CONNECTED) return false;
     HTTPClient http;
-    http.setTimeout(12000);
+    http.setTimeout(5000);
     if (!http.begin(url)) return false;
     int code = http.GET();
     if (code != 200) { http.end(); return false; }
@@ -399,9 +468,44 @@ static void fetchCol(const BusStopCfg& cfg, BusColState& col) {
 }
 
 static void fetchAllEta() {
-    fetchCol(g_profiles[g_activeProfile].busA, g_colA);
-    fetchCol(g_profiles[g_activeProfile].busB, g_colB);
-    g_lastEta = millis();
+    g_etaStep = 1;
+    g_lastEta = 0;
+}
+
+static void etaTick() {
+    if (WiFi.status() != WL_CONNECTED) return;
+    if (g_etaStep == 0 && millis() - g_lastEta < ETA_REFRESH_MS) return;
+    if (g_etaStep == 0) g_etaStep = 1;
+    if (g_etaStep == 1) {
+        fetchCol(g_profiles[g_activeProfile].busA, g_colA);
+        g_etaStep = 2;
+        return;
+    }
+    if (g_etaStep == 2) {
+        fetchCol(g_profiles[g_activeProfile].busB, g_colB);
+        g_etaStep = 0;
+        g_lastEta = millis();
+        g_bootTasksDone = true;
+    }
+}
+
+static void wifiTick() {
+    if (!g_cfg.wifi.ssid[0]) return;
+    if (WiFi.status() == WL_CONNECTED) {
+        if (!g_ntpDone) {
+            static uint32_t ntpStart = 0;
+            if (!ntpStart) {
+                configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+                ntpStart = millis();
+            }
+            if (time(nullptr) > 1700000000 || millis() - ntpStart > 5000) g_ntpDone = true;
+        }
+        return;
+    }
+    if (g_wifiTryMs && millis() - g_wifiTryMs < 10000) return;
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(g_cfg.wifi.ssid, g_cfg.wifi.password);
+    g_wifiTryMs = millis();
 }
 
 // ---------------------------------------------------------------------------
@@ -533,7 +637,9 @@ static void mqttCallback(char* tpc, byte* payload, unsigned int len) {
 }
 
 static void mqttConnect() {
+    static bool configReqSent = false;
     if (!g_mqtt.connected()) {
+        configReqSent = false;
         String cid = "m5-" + g_deviceId;
         if (g_mqtt.connect(cid.c_str())) {
             g_mqtt.subscribe(topic("config").c_str());
@@ -541,6 +647,10 @@ static void mqttConnect() {
             g_mqtt.subscribe(topic("weather").c_str());
             g_mqtt.subscribe(topic("stock").c_str());
             g_mqttOk = true;
+            if (!configReqSent) {
+                publishRefreshRequest("config");
+                configReqSent = true;
+            }
         }
     } else {
         g_mqtt.loop();
@@ -577,7 +687,7 @@ public:
     bool imu4Way() const override { return true; }
 
     void onLoop() override {
-        if (millis() - g_lastEta > ETA_REFRESH_MS) fetchAllEta();
+        etaTick();
     }
 
     void onBtnAPress() override {
@@ -595,6 +705,8 @@ public:
         c.setTextColor(C_DIM);
         c.setCursor(2, h - 10);
         c.printf("P%d %s", g_activeProfile + 1, g_profiles[g_activeProfile].name);
+        c.setCursor(w - 72, h - 10);
+        c.print(g_cfg.english ? "B:Menu Ax5" : "B:選單 A×5");
     }
 
 private:
@@ -623,6 +735,17 @@ private:
                 ry += 36;
             }
         }
+        if (!col.ok) {
+            c.setTextSize(1);
+            c.setTextColor(C_DIM);
+            c.setCursor(x + 4, ry);
+            if (WiFi.status() != WL_CONNECTED)
+                c.print(g_cfg.english ? "No WiFi" : "無 WiFi");
+            else if (!cfg.route[0] || !cfg.stop[0])
+                c.print(g_cfg.english ? "No stop" : "未設站點");
+            else
+                c.print(g_cfg.english ? "Loading..." : "載入中...");
+        }
     }
 };
 
@@ -635,6 +758,8 @@ public:
     bool forcePortrait() const override { return true; }
 
     void onLoop() override {
+        if (millis() - g_lastRssiScan < 2000) return;
+        g_lastRssiScan = millis();
         const char* tgt = g_cfg.radar.ssid[0] ? g_cfg.radar.ssid : WiFi.SSID().c_str();
         int n = WiFi.scanNetworks(false, true);
         int best = -127, ch = 0;
@@ -677,6 +802,9 @@ public:
         c.setTextSize(1);
         c.setCursor(8, barY + barH + 32);
         c.printf("%d%%  CH %d", g_radarPct, g_radarCh);
+        c.setTextColor(C_DIM);
+        c.setCursor(4, h - 10);
+        c.print(g_cfg.english ? "A/B:Back Bus" : "A/B:返巴士");
     }
 };
 
@@ -689,8 +817,12 @@ public:
     bool forceLandscape() const override { return true; }
 
     void onBtnAPress() override {
-        g_cfg.activeStock = (g_cfg.activeStock + 1) % STOCK_SLOTS;
+        for (int n = 0; n < STOCK_SLOTS; ++n) {
+            g_cfg.activeStock = (g_cfg.activeStock + 1) % STOCK_SLOTS;
+            if (g_cfg.stocks[g_cfg.activeStock].symbol[0]) break;
+        }
         saveNvs();
+        publishRefreshRequest("stock");
     }
 
     void onBtnALongPress() override { publishRefreshRequest("stock"); }
@@ -718,7 +850,7 @@ public:
         drawProfessionalWaveChart(c, 4, 40, w - 8, h - 50, tc);
         c.setTextColor(C_DIM);
         c.setCursor(4, h - 10);
-        c.print(g_cfg.english ? "HK: Green Up / Red Down" : "港股：綠升紅跌");
+        c.print(g_cfg.english ? "A:Next B:Menu" : "A:換股 B:選單");
     }
 
 private:
@@ -812,7 +944,10 @@ public:
         }
         c.setTextColor(C_DIM);
         c.setCursor(4, h - 10);
-        c.print(g_cfg.english ? "A:toggle  A hold:refresh" : "A:切換  A長按:刷新");
+        if (!g_weatherForecastView)
+            c.print(g_cfg.english ? "A:9-Day  B:Menu" : "A:九天 B:選單");
+        else
+            c.print(g_cfg.english ? "A:Live  B:Menu" : "A:即時 B:選單");
     }
 };
 
@@ -835,7 +970,7 @@ static AppModule* modFor(AppMode m) {
 // Carousel Menu (8 cards, portrait)
 // ---------------------------------------------------------------------------
 static const char* cardTitle(int i, bool en) {
-    static const char* zh[] = {"Active App","Bus Profile","WiFi Target","Brightness","Sleep Timeout","Language","Pair QR","Save & Exit"};
+    static const char* zh[] = {"目前模組","巴士 Profile","WiFi 目標","螢幕亮度","休眠時間","顯示語言","配對 QR","儲存離開"};
     static const char* enT[] = {"Active App","Bus Profile","WiFi Target","Brightness","Sleep Timeout","Language","Pair QR","Save & Exit"};
     return en ? enT[i] : zh[i];
 }
@@ -921,33 +1056,27 @@ static void renderQr() {
 class KeyEngine {
     uint8_t cntA_ = 0, cntB_ = 0;
     uint32_t lastA_ = 0, lastB_ = 0;
-    bool wasA_ = false, wasB_ = false;
-    uint32_t pressA_ = 0;
-    bool longA_ = false;
 
 public:
     void update(AppModule* mod) {
         M5.update();
-        bool a = M5.BtnA.isPressed();
-        bool b = M5.BtnB.isPressed();
+        M5.BtnA.setHoldThresh(LONG_PRESS_MS);
+        M5.BtnB.setHoldThresh(LONG_PRESS_MS);
         uint32_t now = millis();
 
-        if (a && !wasA_) { touch(); pressA_ = now; longA_ = false; }
-        if (!a && wasA_) {
-            uint32_t held = now - pressA_;
-            if (!longA_ && held < LONG_PRESS_MS) {
-                if (now - lastA_ > MULTI_CLICK_MS) cntA_ = 0;
-                ++cntA_;
-                lastA_ = now;
-                if (cntA_ < MULTI_CLICK_TARGET) onSingleA(mod);
-            }
+        if (M5.BtnA.wasClicked()) {
+            touch();
+            if (now - lastA_ > MULTI_CLICK_MS) cntA_ = 0;
+            ++cntA_;
+            lastA_ = now;
+            if (cntA_ < MULTI_CLICK_TARGET) onSingleA(mod);
         }
-        if (a && wasA_ && !longA_ && (now - pressA_) >= LONG_PRESS_MS) {
-            longA_ = true;
+        if (M5.BtnA.wasHold()) {
+            touch();
             onLongA(mod);
         }
 
-        if (b && !wasB_) {
+        if (M5.BtnB.wasClicked()) {
             touch();
             if (now - lastB_ > MULTI_CLICK_MS) cntB_ = 0;
             ++cntB_;
@@ -963,7 +1092,6 @@ public:
             if (cntB_ >= MULTI_CLICK_TARGET) g_ui = UiScreen::QrCode;
             cntB_ = 0;
         }
-        wasA_ = a; wasB_ = b;
     }
 
 private:
@@ -1045,23 +1173,16 @@ static void renderFrame() {
     if (g_bootTasksDone && to && millis() - g_lastActivity > to) M5.Display.sleep();
 }
 
-static void connectWifi() {
-    if (!g_cfg.wifi.ssid[0]) return;
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(g_cfg.wifi.ssid, g_cfg.wifi.password);
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(200);
-    if (WiFi.status() == WL_CONNECTED) {
-        configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
-        for (int i = 0; i < 20 && time(nullptr) < 1700000000; ++i) delay(200);
-    }
-}
+static void connectWifi() { wifiTick(); }
 
 void setup() {
     auto cfg = M5.config();
     cfg.fallback_board = m5::board_t::board_M5StickS3;
     cfg.internal_imu = true;
     M5.begin(cfg);
+
+    M5.BtnA.setHoldThresh(LONG_PRESS_MS);
+    M5.BtnB.setHoldThresh(LONG_PRESS_MS);
 
     g_lastActivity = millis();
     M5.Display.setRotation(0);
@@ -1076,6 +1197,8 @@ void setup() {
     g_deviceId = id;
 
     loadNvs();
+    g_ui = UiScreen::Module;
+    if (g_cfg.appMode >= AppMode::Count) g_cfg.appMode = AppMode::Bus;
     drawBootSplash();
 
     g_mqtt.setServer(MQTT_HOST, MQTT_PORT);
@@ -1087,6 +1210,8 @@ void setup() {
 
 void loop() {
     g_keys.update(modFor(g_cfg.appMode));
+    wifiTick();
+    etaTick();
     if (WiFi.status() == WL_CONNECTED) {
         mqttConnect();
         if (g_mqttOk && millis() - g_lastState > STATE_PUBLISH_MS) {
@@ -1094,22 +1219,6 @@ void loop() {
             g_lastState = millis();
         }
     }
-    if (WiFi.status() != WL_CONNECTED && g_cfg.wifi.ssid[0]) {
-        static uint32_t retry = 0;
-        if (millis() - retry > 30000) { retry = millis(); connectWifi(); }
-    }
     renderFrame();
-
-    if (!g_bootTasksDone) {
-        static bool wifiDone = false;
-        if (!wifiDone) {
-            connectWifi();
-            wifiDone = true;
-        } else {
-            fetchAllEta();
-            g_bootTasksDone = true;
-            touch();
-        }
-    }
-    delay(16);
+    delay(5);
 }
