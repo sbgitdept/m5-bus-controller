@@ -210,7 +210,7 @@ static bool shouldRenderFrame() {
     uint32_t now = millis();
     uint32_t hash = computeFrameHash();
     if (!g_frameDirty && hash == g_lastFrameHash) return false;
-    if (g_lastFrameMs && (now - g_lastFrameMs) < 50) return false;
+    if (g_lastFrameMs && (now - g_lastFrameMs) < 100) return false;
     g_frameDirty = false;
     g_lastFrameHash = hash;
     g_lastFrameMs = now;
@@ -770,17 +770,8 @@ public:
         (void)w;
         (void)h;
         c.fillSprite(C_BG);
-
-        char header[40];
-        snprintf(header, sizeof(header), "BUS ETA   P%d", g_activeProfile + 1);
-        drawMc(c, &fonts::Font0, header, 120, 12, C_DIM);
-
         drawCol(c, BUS_COL_A_X, g_colA, g_profiles[g_activeProfile].busA);
         drawCol(c, BUS_COL_B_X, g_colB, g_profiles[g_activeProfile].busB);
-
-        drawMc(c, &fonts::Font0,
-               g_cfg.english ? "[A] Profile  [B] Menu" : "[A] Profile  [B] Menu",
-               120, 120, C_DIM);
     }
 
 private:
@@ -819,31 +810,27 @@ private:
         snprintf(routeLine, sizeof(routeLine), "%s %s", route, dest);
 
         if (g_cfg.english)
-            drawMc(c, &fonts::Font0, routeLine, cx, 40, TFT_WHITE);
+            drawMc(c, &fonts::Font2, routeLine, cx, 18, TFT_WHITE);
         else
-            drawMc(c, &fonts::efontTW_12, routeLine, cx, 40, TFT_WHITE);
+            drawMc(c, &fonts::efontTW_16, routeLine, cx, 18, TFT_WHITE);
 
         int mins = firstEtaMins(col);
         if (mins < 0) {
-            const char* msg;
-            if (WiFi.status() != WL_CONNECTED)
-                msg = g_cfg.english ? "--" : "--";
-            else if (!cfg.route[0] || !cfg.stop[0])
-                msg = g_cfg.english ? "--" : "--";
-            else
-                msg = g_cfg.english ? "..." : "...";
-            drawMc(c, &fonts::Font4, msg, cx, 80, C_DIM);
+            drawMc(c, &fonts::Font7, "--", cx, 75, C_DIM);
             return;
         }
 
-        if (mins <= 0) {
-            drawMc(c, &fonts::Font6, "0", cx, 80, TFT_RED);
-            return;
-        }
-
+        int displayMins = mins <= 0 ? 0 : mins;
         char num[8];
-        snprintf(num, sizeof(num), "%d", mins);
-        drawMc(c, &fonts::Font6, num, cx, 80, etaColor(mins));
+        snprintf(num, sizeof(num), "%d", displayMins);
+        drawMc(c, &fonts::Font7, num, cx, 75, etaColor(displayMins));
+
+        if (displayMins > 0) {
+            if (g_cfg.english)
+                drawMc(c, &fonts::Font0, "m", cx, 118, C_DIM);
+            else
+                drawMc(c, &fonts::efontTW_12, "\xe5\x88\x86", cx, 118, C_DIM);
+        }
     }
 };
 
@@ -1312,5 +1299,5 @@ void loop() {
         }
     }
     renderFrame();
-    delay(50);
+    delay(100);
 }

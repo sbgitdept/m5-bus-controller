@@ -346,7 +346,7 @@ function log(msg, type='info') {
 const MQTT_WS = 'wss://broker.hivemq.com:8884/mqtt';
 const KMB = 'https://data.etabus.gov.hk/v1/transport/kmb';
 const CTB = 'https://rt.data.gov.hk/v2/transport/citybus';
-const HKO = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php';
+const HKO_BASE = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php';
 const PROFILE_COUNT = 4;
 const DB_KEY = 'm5-v6-db';
 const DEVICE_KEY = 'm5-device-id';
@@ -357,6 +357,23 @@ let liveWifiNetworks = [];
 
 function getId() { return ($('deviceId').value||'').trim().toUpperCase().replace(/[^0-9A-F]/g,''); }
 function topic(suffix) { return `m5bus_${getId()}/${suffix}`; }
+
+async function safeFetch(url, label = 'API') {
+  try {
+    const r = await fetch(url, { mode: 'cors', cache: 'no-store' });
+    if (!r.ok) throw new Error(`${label} HTTP ${r.status}`);
+    return await r.json();
+  } catch (err) {
+    console.error(`[${label}] fetch failed:`, err);
+    const raw = err?.message || String(err);
+    if (raw.includes('Failed to fetch') || raw.includes('NetworkError') || raw.includes('Load failed')) {
+      throw new Error(lang === 'en'
+        ? `${label}: network/CORS error — check your connection`
+        : `${label}：網絡或 CORS 錯誤，請檢查連線`);
+    }
+    throw err;
+  }
+}
 
 function translateAndShortenName(rawText) {
   if (!rawText) return '';
@@ -387,7 +404,13 @@ function loadDb() {
 }
 function saveDb(db) { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 
-function busFw(b) { return {co:b.co||'KMB',route:b.route||'',stop:b.stopId||b.stop||'',svc:b.svc||b.serviceType||'1',bound:b.bound||'O',name:translateAndShortenName(b.stopName||b.name||'')}; }
+function busFw(b) {
+  const name = translateAndShortenName(b.stopName||b.name||'');
+  return {
+    co:b.co||'KMB', route:b.route||'', stop:b.stopId||b.stop||'',
+    svc:b.svc||b.serviceType||'1', bound:b.bound||'O', name, dest: b.dest || name
+  };
+}
 
 function buildConfigPayload(activeModule) {
   saveProfileToDb();
@@ -517,13 +540,14 @@ function pubJson(suffix, obj) {
 }
 
 async function fetchHko(dataType) {
-  const r = await fetch(`${HKO}?dataType=${dataType}&lang=${lang==='en'?'en':'tc'}`);
-  if (!r.ok) throw new Error(`HKO ${dataType} ${r.status}`);
-  return r.json();
+  const langCode = lang === 'en' ? 'en' : 'tc';
+  const url = `${HKO_BASE}?dataType=${encodeURIComponent(dataType)}&lang=${langCode}`;
+  return safeFetch(url, `HKO ${dataType}`);
 }
 
 async function buildWeather() {
-  const [rhr, fnd] = await Promise.all([fetchHko('rhrread'), fetchHko('fnd')]);
+  try {
+    const [rhr, fnd] = await Promise.all([fetchHko('rhrread'), fetchHko('fnd')]);
   const warnings = [];
   if (Array.isArray(rhr.warnsum)) {
     for (const w of rhr.warnsum) warnings.push({code:w.code,name:translateAndShortenName(w.name||w.code),action:w.actionCode||'issue'});
@@ -545,42 +569,65 @@ async function buildWeather() {
     current:{temp:Number(temps[0]?.value??0), humidity:Number(hums[0]?.value??0), icon:Number(Array.isArray(rhr.icon)?rhr.icon[0]:50)},
     warnings, forecast
   };
+  } catch (err) {
+    console.error('buildWeather failed:', err);
+    throw err;
+  }
 }
 
 async function pushWeather() {
   if (!connected) throw new Error(lang==='en'?'MQTT not connected':'請先連線 MQTT');
-  const payload = await buildWeather();
-  $('weatherPreview').textContent = JSON.stringify(payload,null,2);
-  await pubJson('weather', payload);
-  log(lang==='en'?'Weather pushed':'天氣已推送','ok');
-  toast(lang==='en'?'Weather sent':'🚀 天氣已發送至 M5','ok');
+  try {
+    const payload = await buildWeather();
+    $('weatherPreview').textContent = JSON.stringify(payload,null,2);
+    await pubJson('weather', payload);
+    log(lang==='en'?'Weather pushed':'天氣已推送','ok');
+    toast(lang==='en'?'Weather sent':'🚀 天氣已發送至 M5','ok');
+  } catch (err) {
+    console.error('pushWeather failed:', err);
+    const msg = err?.message || String(err);
+    log(msg, 'err');
+    toast(msg, 'err');
+    throw err;
+  }
 }
 
 async function buildStock(symbol, name) {
-  const sym = symbol||'0700.HK';
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=5m&range=1d`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Stock ${r.status}`);
-  const j = await r.json();
-  const meta = j.chart?.result?.[0]?.meta||{};
-  const closes = (j.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[]).filter(v=>v!=null);
-  const price = meta.regularMarketPrice ?? closes.at(-1) ?? 0;
-  const prev = meta.chartPreviousClose ?? meta.previousClose ?? price;
-  const change = price - prev;
-  return {v:1,updated:new Date().toISOString(),symbol:sym,name:name||meta.shortName||sym,
-    price:Number(price),change:Number(change),changePct:prev?(change/prev*100):0,
-    prevClose:Number(prev),history:closes.slice(-48)};
+  try {
+    const sym = symbol||'0700.HK';
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=5m&range=1d`;
+    const j = await safeFetch(url, `Yahoo ${sym}`);
+    const meta = j.chart?.result?.[0]?.meta||{};
+    const closes = (j.chart?.result?.[0]?.indicators?.quote?.[0]?.close||[]).filter(v=>v!=null);
+    const price = meta.regularMarketPrice ?? closes.at(-1) ?? 0;
+    const prev = meta.chartPreviousClose ?? meta.previousClose ?? price;
+    const change = price - prev;
+    return {v:1,updated:new Date().toISOString(),symbol:sym,name:name||meta.shortName||sym,
+      price:Number(price),change:Number(change),changePct:prev?(change/prev*100):0,
+      prevClose:Number(prev),history:closes.slice(-48)};
+  } catch (err) {
+    console.error('buildStock failed:', err);
+    throw err;
+  }
 }
 
 async function pushStock() {
   if (!connected) throw new Error(lang==='en'?'MQTT not connected':'請先連線 MQTT');
-  const db = loadDb();
-  const slot = db.stocks[0]||{symbol:'0700.HK',name:'Tencent'};
-  const payload = await buildStock(slot.symbol, slot.name);
-  $('stockPreview').textContent = JSON.stringify(payload,null,2);
-  await pubJson('stock', payload);
-  log(lang==='en'?'Stock pushed':'股票已推送','ok');
-  toast(lang==='en'?'Stock sent':'🚀 股票已發送至 M5','ok');
+  try {
+    const db = loadDb();
+    const slot = db.stocks[0]||{symbol:'0700.HK',name:'Tencent'};
+    const payload = await buildStock(slot.symbol, slot.name);
+    $('stockPreview').textContent = JSON.stringify(payload,null,2);
+    await pubJson('stock', payload);
+    log(lang==='en'?'Stock pushed':'股票已推送','ok');
+    toast(lang==='en'?'Stock sent':'🚀 股票已發送至 M5','ok');
+  } catch (err) {
+    console.error('pushStock failed:', err);
+    const msg = err?.message || String(err);
+    log(msg, 'err');
+    toast(msg, 'err');
+    throw err;
+  }
 }
 
 function startAutoSync() {
@@ -604,13 +651,24 @@ function populateRoutes() {
 }
 
 async function syncRoutes() {
-  const [k,c] = await Promise.all([fetch(`${KMB}/route/`), fetch(`${CTB}/route/CTB`)]);
-  kmbRoutes = (await k.json()).data||[];
-  ctbRoutes = (await c.json()).data||[];
-  kmbNums = [...new Set(kmbRoutes.map(r=>r.route))].sort();
-  ctbNums = [...new Set(ctbRoutes.map(r=>r.route))].sort();
-  populateRoutes();
-  log(lang==='en'?'Routes synced':'路線已同步','ok');
+  try {
+    const [kData, cData] = await Promise.all([
+      safeFetch(`${KMB}/route/`, 'KMB routes'),
+      safeFetch(`${CTB}/route/CTB`, 'CTB routes')
+    ]);
+    kmbRoutes = kData.data||[];
+    ctbRoutes = cData.data||[];
+    kmbNums = [...new Set(kmbRoutes.map(r=>r.route))].sort();
+    ctbNums = [...new Set(ctbRoutes.map(r=>r.route))].sort();
+    populateRoutes();
+    log(lang==='en'?'Routes synced':'路線已同步','ok');
+    toast(lang==='en'?'Routes synced':'路線已同步','ok');
+  } catch (err) {
+    console.error('syncRoutes failed:', err);
+    const msg = err?.message || String(err);
+    log(msg, 'err');
+    toast(msg, 'err');
+  }
 }
 
 function variants(route, side) { return routes(getCo(side)).filter(v=>v.route===route); }
@@ -623,18 +681,30 @@ async function loadStops(side) {
   const v = variants(route, side)[Number(idx)];
   const stopSel = $(side==='B'?'stopB':'stopA');
   stopSel.innerHTML='<option>Loading…</option>'; stopSel.disabled=true;
-  let stops=[];
-  if (getCo(side)==='CTB') {
-    if (!ctbStops) { const r=await fetch(`${CTB}/route-stop/CTB`); ctbStops=(await r.json()).data||[]; }
-    stops = ctbStops.filter(s=>s.route===route&&s.bound===v.bound&&String(s.service_type)===String(v.service_type));
-  } else {
-    const path = v.bound==='I'?'inbound':'outbound';
-    const r = await fetch(`${KMB}/route-stop/${route}/${path}/${v.service_type}`);
-    stops = (await r.json()).data||[];
+  try {
+    let stops=[];
+    if (getCo(side)==='CTB') {
+      if (!ctbStops) {
+        const data = await safeFetch(`${CTB}/route-stop/CTB`, 'CTB stops');
+        ctbStops = data.data||[];
+      }
+      stops = ctbStops.filter(s=>s.route===route&&s.bound===v.bound&&String(s.service_type)===String(v.service_type));
+    } else {
+      const path = v.bound==='I'?'inbound':'outbound';
+      const data = await safeFetch(`${KMB}/route-stop/${route}/${path}/${v.service_type}`, `KMB stops ${route}`);
+      stops = data.data||[];
+    }
+    stopSel.innerHTML='';
+    stops.forEach((s,i)=>{ const o=document.createElement('option'); o.value=s.stop||s.stop_id; o.textContent=`${i+1}. ${translateAndShortenName(s.name_tc||s.name_en||'')}`; stopSel.appendChild(o); });
+    stopSel.disabled = !stops.length;
+  } catch (err) {
+    console.error('loadStops failed:', err);
+    stopSel.innerHTML='<option>— error —</option>';
+    stopSel.disabled = true;
+    const msg = err?.message || String(err);
+    log(msg, 'err');
+    toast(msg, 'err');
   }
-  stopSel.innerHTML='';
-  stops.forEach((s,i)=>{ const o=document.createElement('option'); o.value=s.stop||s.stop_id; o.textContent=`${i+1}. ${translateAndShortenName(s.name_tc||s.name_en||'')}`; stopSel.appendChild(o); });
-  stopSel.disabled = !stops.length;
 }
 
 function populateVariants(route, side, bound='O', svc='1') {
