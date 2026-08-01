@@ -495,7 +495,7 @@ function connect() {
         const msg = JSON.parse(buf.toString());
         if (msg.type === 'weather') pushWeather().catch(e => log(e.message, 'err'));
         if (msg.type === 'stock') pushStock().catch(e => log(e.message, 'err'));
-        if (msg.type === 'config') pubConfig().then(() => log(lang==='en'?'Config pushed (boot request)':'已回應開機設定請求','ok')).catch(e => log(e.message, 'err'));
+        if (msg.type === 'config') pubConfig('bus').then(() => log(lang==='en'?'Config pushed (boot request)':'已回應開機設定（保持巴士主頁）','ok')).catch(e => log(e.message, 'err'));
       } catch {}
       return;
     }

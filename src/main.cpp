@@ -351,7 +351,7 @@ static void applyConfig(const char* json, size_t len) {
     if (deserializeJson(g_jsonDoc, json, len)) return;
 
     const char* activeMod = g_jsonDoc["active_module"] | nullptr;
-    if (activeMod) g_cfg.appMode = modeFrom(activeMod);
+    (void)activeMod; // v6: active_module 只標示 CRM 分頁，不切換裝置畫面
 
     if (g_jsonDoc["active_profile"].is<int>()) g_activeProfile = g_jsonDoc["active_profile"];
     if (g_jsonDoc["active_stock"].is<int>()) g_cfg.activeStock = g_jsonDoc["active_stock"];
@@ -390,7 +390,7 @@ static void applyConfig(const char* json, size_t len) {
         if (st["bright"].is<int>()) g_cfg.bright = st["bright"];
         if (st["timeout"].is<int>()) g_cfg.timeout = st["timeout"];
         if (st["english"].is<bool>()) g_cfg.english = st["english"];
-        if (st["app_mode"].is<const char*>()) g_cfg.appMode = modeFrom(st["app_mode"]);
+        // app_mode 僅由裝置按鍵/選單切換，MQTT 不覆寫
         if (st["wifi"]["ssid"].is<const char*>()) strlcpy(g_cfg.wifi.ssid, st["wifi"]["ssid"], sizeof(g_cfg.wifi.ssid));
         if (st["wifi"]["password"].is<const char*>()) strlcpy(g_cfg.wifi.password, st["wifi"]["password"], sizeof(g_cfg.wifi.password));
         if (st["radar"]["ssid"].is<const char*>()) strlcpy(g_cfg.radar.ssid, st["radar"]["ssid"], sizeof(g_cfg.radar.ssid));
@@ -1198,7 +1198,7 @@ void setup() {
 
     loadNvs();
     g_ui = UiScreen::Module;
-    if (g_cfg.appMode >= AppMode::Count) g_cfg.appMode = AppMode::Bus;
+    g_cfg.appMode = AppMode::Bus;  // 開機主頁：巴士 ETA
     drawBootSplash();
 
     g_mqtt.setServer(MQTT_HOST, MQTT_PORT);
